@@ -1,0 +1,30 @@
+# ESP32 LoRa firmware
+
+PlatformIO firmware for the ESP32 LoRa Gateway project. The companion Flask Gateway is [ESP32_LoRa_Project](https://github.com/selvarithik/ESP32_LoRa_Project).
+
+The shared [configuration contract](CONFIG_CONTRACT.md) is version 1.0.1, wire schema 1. Both repositories must keep identical contract bytes.
+
+## Build and checks
+
+Use Python, Node.js and PlatformIO. Clone both repositories beside each other using their repository names so cross-project contract checks can locate the Gateway copy.
+
+```powershell
+python test/check_contract.py
+python test/build_web_assets.py --check
+node test/local_page.cjs
+node test/mqtt_page.cjs
+node test/access_page.cjs
+python test/check_sessions.py
+python test/check_mqtt_failure.py
+python test/check_lora.py
+pio run
+python test/check_partitions.py
+```
+
+Building does not upload firmware. Review the board, current partition layout and backup requirements before any deployment. The existing PlatformIO application/OTA layout is retained.
+
+## Configuration and acceptance
+
+Credentials are provisioned locally through the existing USB commissioning workflow; do not commit private deployment profiles, credentials or flash dumps. See [commissioning](docs/COMMISSIONING.md) and the [implementation and acceptance report](docs/FINAL_ACCESS_REPORT.md).
+
+The source includes browser login/account pages and canonical verified-TLS MQTT transport. A successful build does not establish live broker connectivity or physical delivery. The Gateway permanent worker requires verified broker authorization before enabling its ACL trust gate. E220 hardware activation remains unavailable; reserved radio controls and host tests do not establish radio functionality.
