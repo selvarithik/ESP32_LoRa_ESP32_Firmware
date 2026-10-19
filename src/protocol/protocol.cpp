@@ -1,10 +1,12 @@
 #include "protocol.h"
 #include <esp_system.h>
+#include "../config/strict_json.h"
+#include "packet_validation_core.h"
 
 namespace {
 uint32_t counter=0;
-uint32_t crc32(const String& text) { uint32_t crc=~0u;for(size_t i=0;i<text.length();++i) {crc^=(uint8_t)text[i];for(int j=0;j<8;++j)crc=(crc>>1)^(0xedb88320u&-(crc&1));}return ~crc; }
-bool id(const String& s) { if(!s.length()||s.length()>48)return false;for(size_t i=0;i<s.length();++i)if(!isalnum(s[i])&&s[i]!='-'&&s[i]!='_'&&s[i]!='.'&&s[i]!=':')return false;return true; }
+uint32_t crc32(const String& text) {return PacketValidationCore::crc32(text.c_str(),text.length());}
+bool id(const String& s) {return PacketValidationCore::identity(s.c_str(),s.length());}
 }
 String packetTypeToString(PacketType t) {
 #define TYPE(n) case PacketType::n:return #n;
@@ -30,8 +32,9 @@ String Message::toJson() const {
     String s;serializeJson(d,s);return s;
 }
 bool Message::fromJson(const String& input, Message& out) {
-    if(input.length()>MAX_FRAME_BYTES)return false;
+    if(!StrictJson::valid(input,MAX_FRAME_BYTES))return false;
     JsonDocument d;if(deserializeJson(d,input,DeserializationOption::NestingLimit(8))||!d.is<JsonObject>())return false;
+    if(d.size()!=15)return false;
     const char* strings[]={"message_id","source","destination","origin_id","final_destination_id","type","payload","correlation_id"};
     for(auto k:strings)if(!d[k].is<const char*>())return false;
     const char* numbers[]={"protocol_version","ttl","timestamp","sequence_number","payload_length","payload_crc32"};
@@ -41,8 +44,8 @@ bool Message::fromJson(const String& input, Message& out) {
     m.origin=d["origin_id"].as<String>();m.correlationId=d["correlation_id"].as<String>();m.nextHop=d["next_hop"]|"";
     m.type=packetTypeFromString(d["type"].as<String>());m.ttl=d["ttl"];m.timestamp=d["timestamp"];m.sequence=d["sequence_number"];m.payload=d["payload"].as<String>();
     if(!id(m.messageId)||!id(m.source)||!id(m.destination)||!id(m.origin)||(!m.correlationId.isEmpty()&&!id(m.correlationId)))return false;
-    if(d["final_destination_id"].as<String>()!=m.destination||m.type==PacketType::UNKNOWN||m.payload.length()>MAX_PAYLOAD_BYTES)return false;
+    if(m.origin!=m.source||!id(m.nextHop)||d["final_destination_id"].as<String>()!=m.destination||m.type==PacketType::UNKNOWN||m.payload.length()>MAX_PAYLOAD_BYTES)return false;
     if(d["payload_length"].as<size_t>()!=m.payload.length()||d["payload_crc32"].as<uint32_t>()!=crc32(m.payload))return false;
-    JsonDocument p;if(deserializeJson(p,m.payload,DeserializationOption::NestingLimit(6))||!p.is<JsonObject>())return false;
+    JsonDocument p;if(!StrictJson::valid(m.payload,MAX_PAYLOAD_BYTES)||deserializeJson(p,m.payload,DeserializationOption::NestingLimit(6))||!p.is<JsonObject>())return false;
     out=m;return true;
 }

@@ -28,11 +28,13 @@ struct DeviceConfig {
     String wifi_password;
 
     bool ethernet_enabled = false;
-    bool ble_enabled = false;
 
     String server_host;
     uint16_t server_port = 5000;
     bool server_https = false;
+    bool local_ip_enabled = false;
+    String local_ip_token;
+    String routing_policy = "MASTER_ONLY";
 
     uint32_t lora_baud = 9600;
     int lora_rx_pin = 16;
@@ -63,11 +65,23 @@ struct DeviceConfig {
     bool dht_enabled = false;
     int dht_pin = 4;
     bool wifi_dhcp = true;
-    String wifi_ip, wifi_subnet = "255.255.255.0", wifi_gateway, wifi_dns;
+    String wifi_ip, wifi_subnet = "255.255.255.0", wifi_gateway, wifi_dns, wifi_dns2;
+    bool server_led_enabled = true;
+    bool server_led_active_high = true;
+    bool tm1637_enabled = true;
+    bool ina219_enabled = true;
+    uint8_t ina219_address = 64;
+    uint16_t ina219_shunt_milliohms = 0; // Unknown: no current/power until configured.
+    bool mq135_enabled = false; // Physical voltage-divider verification required.
+    uint32_t mq135_warmup_seconds = 86400; // Conservative initial conditioning, not calibration.
+    bool sleep_enabled = false;
+    uint16_t sleep_start_minute = 0;
+    uint32_t sleep_duration_seconds = 3600;
+    uint8_t sleep_days_mask = 127;
+    int utc_offset_minutes = 330;
     String ethernet_interface = "NOT_CONFIGURED";
     bool ethernet_dhcp = true;
     String ethernet_ip, ethernet_subnet, ethernet_gateway, ethernet_dns;
-    String ble_name = "ESP32 commissioning";
     bool lora_enabled = false;
     uint8_t lora_uart = 2;
     uint8_t lora_address_high = 0, lora_address_low = 0;

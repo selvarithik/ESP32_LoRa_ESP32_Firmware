@@ -14,11 +14,14 @@ public:
     bool gatewayConnected() const;
     bool mqttConnected() const;
     uint32_t lastSuccess() const;
+    uint32_t lastGatewayReceipt() const;
     uint32_t dropped() const;
     void gatewayReceipt();
+    bool idle() const;
     String masterAddress() const;
     int lastError() const;
     String internetStatus() const;
+    String localStatus() const;
 };
 
 extern TransportManager transportManager;

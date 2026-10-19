@@ -1,3 +1,5 @@
+> Historical snapshot: BLE references below describe earlier revisions only. BLE is excluded and removed from active features as of 2026-10-19; see BLE_SENSOR_REPORT.md.
+
 # Part 1 implementation report and bench procedure
 
 Date: 2026-10-15. Target: two ESP32 DevKit V1 / ESP32-WROOM-32 boards. Sensor currently disconnected.

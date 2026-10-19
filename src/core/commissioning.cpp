@@ -1,4 +1,6 @@
+#include "../sensors/sensor_manager.h"
 #include "commissioning.h"
+#include "connection_indicators.h"
 #include "config_manager.h"
 #include "../config/mqtt_staging.h"
 #include <Preferences.h>
@@ -49,7 +51,7 @@ void dispatch(){
     if(op=="status"&&d.size()==1){
         JsonDocument out;out["ok"]=true;out["device_id"]=configManager.get().device_id;out["username"]=accountName;out["password_change_required"]=required();out["station_ip"]=WiFi.localIP().toString();out["ap_ip"]=WiFi.softAPIP().toString();out["free_heap"]=ESP.getFreeHeap();out["loop_stack_free_min_bytes"]=uxTaskGetStackHighWaterMark(nullptr);out["network_stack_free_min_bytes"]=transportManager.minimumStackFreeBytes();out["free_8bit_heap"]=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_8bit_block"]=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_free_block"]=ESP.getMaxAllocHeap();out["minimum_free_heap"]=ESP.getMinFreeHeap();out["uptime_ms"]=millis();out["unix_time"]=time(nullptr);
         JsonDocument mqtt;deserializeJson(mqtt,mqttStaging.status(false));out["mqtt"]=mqtt;
-        String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
+        JsonDocument local;deserializeJson(local,transportManager.localStatus());out["local_ip"]=local;out["role"]=configManager.roleString();out["dht_enabled"]=configManager.get().dht_enabled;out["dht_pin"]=configManager.get().dht_pin;out["ina219_enabled"]=configManager.get().ina219_enabled;out["mq135_enabled"]=configManager.get().mq135_enabled;JsonDocument sensors;sensors.to<JsonArray>();for(unsigned i=0;i<3;++i){JsonDocument reading;deserializeJson(reading,sensorManager.telemetryJson(i));sensors.as<JsonArray>().add(reading);}out["sensors"]=sensors;JsonDocument indicators;deserializeJson(indicators,connectionIndicators.statusJson());out["indicators"]=indicators;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
     }else if(op=="self_test"&&d.size()==1){
         uint32_t started=millis();bool ok=derive("public-pbkdf2-fixture","00112233445566778899aabbccddeeff")=="71c9db0332994401d7d514fe7cd8fc4ca25d7286a222e83ea86d32600f7410e0";
         JsonDocument out;out["ok"]=ok;out["elapsed_ms"]=millis()-started;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
@@ -66,7 +68,7 @@ void dispatch(){
     }else if(op=="config"){
         if(mustChange){reply(false,"PASSWORD_CHANGE_REQUIRED");return;}
         auto v=d["config"].as<JsonObjectConst>();bool valid=d.size()==2&&!v.isNull();
-        for(JsonPairConst p:v){String k=p.key().c_str();if(k!="wifi_ssid"&&k!="wifi_password"&&k!="setup_password"&&k!="mesh_key"&&k!="gateway_token"&&k!="role")valid=false;}
+        for(JsonPairConst p:v){String k=p.key().c_str();if(k!="wifi_ssid"&&k!="wifi_password"&&k!="setup_password"&&k!="mesh_key"&&k!="gateway_token"&&k!="local_ip_token"&&k!="role"&&k!="local_ip_enabled"&&k!="routing_policy"&&k!="server_host"&&k!="server_port"&&k!="server_https"&&k!="master_host"&&k!="master_id"&&k!="allowed_peers_csv"&&k!="dht_enabled"&&k!="dht_pin"&&k!="server_led_enabled"&&k!="server_led_active_high"&&k!="tm1637_enabled"&&k!="ina219_enabled"&&k!="ina219_address"&&k!="ina219_shunt_milliohms"&&k!="mq135_enabled"&&k!="mq135_warmup_seconds"&&k!="heartbeat_seconds"&&k!="telemetry_seconds"&&k!="wifi_dhcp"&&k!="wifi_ip"&&k!="wifi_subnet"&&k!="wifi_gateway"&&k!="wifi_dns")valid=false;}
         if(!valid){reply(false,"INVALID_REQUEST");return;}
         String raw,error;serializeJson(v,raw);reply(configManager.update(raw,error),"CONFIG_RESULT_RESTART_REQUIRED");
     }else if(op=="mqtt_action"){

@@ -1,8 +1,10 @@
+Current local-IP implementation and physical acceptance: [LOCAL_IP_REPORT.md](docs/LOCAL_IP_REPORT.md). MQTT broker acceptance remains separate and pending ACL confirmation.
+
 # ESP32 LoRa firmware
 
 PlatformIO firmware for the ESP32 LoRa Gateway project. The companion Flask Gateway is [ESP32_LoRa_Project](https://github.com/selvarithik/ESP32_LoRa_Project).
 
-The shared [configuration contract](CONFIG_CONTRACT.md) is version 1.0.1, wire schema 1. Both repositories must keep identical contract bytes.
+The shared [configuration contract](CONFIG_CONTRACT.md) is version 1.0.2, wire schema 1. Both repositories must keep identical contract bytes.
 
 ## Build and checks
 
@@ -28,3 +30,7 @@ Building does not upload firmware. Review the board, current partition layout an
 Credentials are provisioned locally through the existing USB commissioning workflow; do not commit private deployment profiles, credentials or flash dumps. See [commissioning](docs/COMMISSIONING.md) and the [implementation and acceptance report](docs/FINAL_ACCESS_REPORT.md).
 
 The source includes browser login/account pages and canonical verified-TLS MQTT transport. A successful build does not establish live broker connectivity or physical delivery. The Gateway permanent worker requires verified broker authorization before enabling its ACL trust gate. E220 hardware activation remains unavailable; reserved radio controls and host tests do not establish radio functionality.
+
+Current sensor/BLE scope and physical acceptance: [BLE_SENSOR_REPORT.md](docs/BLE_SENSOR_REPORT.md). DHT11/INA219 and MQ135 raw telemetry are verified; MQ135 uses the owner-confirmed 10k/10k AO divider and remains uncalibrated.
+
+Latest Master LED/TM1637 and enabled MQ135 raw telemetry: [connection indicators](docs/CONNECTION_INDICATORS.md).

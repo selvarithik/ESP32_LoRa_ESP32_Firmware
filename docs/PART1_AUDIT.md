@@ -1,3 +1,5 @@
+> Historical snapshot: BLE references below describe earlier revisions only. BLE is excluded and removed from active features as of 2026-10-19; see BLE_SENSOR_REPORT.md.
+
 # Part 1 audit and implementation checklist
 
 Audit date: 2026-10-15. Firmware: `D:\esp32 selva\ESP32_LoRa_ESP32_Firmware` (no Git metadata). Gateway: `D:\esp32 selva\ESP32_LoRa_Project` (Git checkout; clean at audit).

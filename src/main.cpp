@@ -14,6 +14,8 @@
 #include "web/local_web_server.h"
 #include "roles/master.h"
 #include "roles/node.h"
+#include "core/power_manager.h"
+#include "core/connection_indicators.h"
 
 void setup() {
     logger.begin(115200);
@@ -21,14 +23,15 @@ void setup() {
     mqttStaging.begin();Commissioning::begin();
     deviceIdentity.begin();systemManager.begin();watchdogManager.begin(10);
     logger.info("IDENTITY","Device ID: "+deviceIdentity.deviceId()+" Role: "+configManager.roleString());
+    connectionIndicators.begin();
     wifiManager.begin(configManager.get());meshManager.begin(configManager.get());
     transportManager.begin();sensorManager.begin();
     if(configManager.get().role==DeviceRole::MASTER)masterRole.begin();else nodeRole.begin();
-    localWebServer.begin();
-    logger.info("SYSTEM","Part 1 Wi-Fi services ready; E220/Ethernet/BLE drivers NOT_AVAILABLE");
+    powerManager.begin();localWebServer.begin();
+    logger.info("SYSTEM","Device Wi-Fi services ready; E220/Ethernet drivers NOT_AVAILABLE");
 }
 void loop() {
     watchdogManager.feed();Commissioning::loop();mqttStaging.loop();wifiManager.loop();
     if(configManager.get().role==DeviceRole::MASTER)masterRole.loop();else nodeRole.loop();
-    localWebServer.loop();delay(2);
+    connectionIndicators.loop();localWebServer.loop();delay(2);
 }

@@ -19,7 +19,6 @@ inline DeviceConfig makeDefaultConfig() {
     c.route_timeout_seconds = 60;
     c.wifi_enabled = true;
     c.ethernet_enabled = false;
-    c.ble_enabled = false;
     c.server_host = "";
     c.server_port = 5000;
     c.server_https = false;

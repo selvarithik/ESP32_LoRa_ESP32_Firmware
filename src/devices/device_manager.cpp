@@ -19,7 +19,6 @@ String DeviceManager::capabilitiesJson() const {
     caps.add("DHT11_OPTIONAL");
     doc["lora_status"]="NOT_AVAILABLE";
     doc["ethernet_status"]="NOT_AVAILABLE";
-    doc["ble_status"]="NOT_AVAILABLE";
 
     String out;
     serializeJson(doc, out);

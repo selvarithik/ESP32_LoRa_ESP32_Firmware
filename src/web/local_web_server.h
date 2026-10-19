@@ -27,6 +27,10 @@ private:
     bool authorize(bool mutation = false);
     bool body(size_t maximum);
     void handlePacket();
+    void handleLocalChallenge();
+    void handleLocalExchange();
+    void readLocalBody();
+    String localBody;
     BrowserSessions sessions;
     BrowserSessions::Entry* browserSession(bool create=false);
     void handleSession();
