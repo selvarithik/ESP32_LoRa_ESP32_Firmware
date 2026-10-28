@@ -68,7 +68,7 @@ struct DeviceConfig {
     String wifi_ip, wifi_subnet = "255.255.255.0", wifi_gateway, wifi_dns, wifi_dns2;
     bool server_led_enabled = true;
     bool server_led_active_high = true;
-    bool tm1637_enabled = true;
+    bool tm1637_enabled = false;
     bool ina219_enabled = true;
     uint8_t ina219_address = 64;
     uint16_t ina219_shunt_milliohms = 0; // Unknown: no current/power until configured.

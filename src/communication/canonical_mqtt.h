@@ -5,6 +5,7 @@ void begin(const String& raw,uint32_t sharedRevision=0);
 bool controlReply(const String& raw);
 void loop();
 void requestEnabled(bool enabled);
+void requestReconnect();
 bool connected();
 bool configured();
 bool publish(const Message& packet);

@@ -1,8 +1,10 @@
 #include "connection_indicators.h"
+#include "../config/hardware_profile.h"
 #include "indicator_core.h"
 #include "config_manager.h"
 #include "../communication/transport_manager.h"
 #include "../communication/wifi_manager.h"
+#include "../communication/lora_transport.h"
 #include <ArduinoJson.h>
 #include <TM1637Display.h>
 #include <memory>
@@ -22,12 +24,12 @@ uint32_t checked=0,drawn=0,waitingAt=0,receipt=0;IndicatorCore::Frame frame;
 }
 void ConnectionIndicators::begin(){auto& c=configManager.get();enabled=c.server_led_enabled;activeHigh=c.server_led_active_high;
  if(enabled){digitalWrite(LedPin,activeHigh?LOW:HIGH);pinMode(LedPin,OUTPUT);}
- displayRequested=c.role==DeviceRole::MASTER&&c.tm1637_enabled;
+ displayRequested=HardwareProfile::DisplayPresent&&c.role==DeviceRole::MASTER&&c.tm1637_enabled;
  if(displayRequested){display.reset(new(std::nothrow) CheckedDisplay());}
  started=true;startedAt=millis();waitingAt=millis();checked=millis()-250;loop();
 }
 void ConnectionIndicators::loop(){if(!started)return;uint32_t now=millis();if((uint32_t)(now-checked)<250)return;checked=now;
- bool wifi=wifiManager.isConnected();receipt=transportManager.lastGatewayReceipt();bool up=IndicatorCore::connected(wifi,now,receipt);bool changed=up!=server||wifi!=lastWifi;
+ bool wifi=wifiManager.isConnected();bool master=configManager.get().role==DeviceRole::MASTER;receipt=master?transportManager.lastGatewayReceipt():transportManager.lastMasterReceipt();bool up=IndicatorCore::connected(master?wifi:(wifi||loraTransport.isInitialized()),now,receipt,IndicatorCore::receiptTimeout(master,configManager.get().heartbeat_seconds));bool changed=up!=server||wifi!=lastWifi;
  if(!server&&up){connectedAt=now;if(connections<0xffffffff)++connections;}if(server&&!up)waitingAt=now;if(!lastWifi&&wifi&&!up)waitingAt=now;server=up;lastWifi=wifi;
  if(enabled)digitalWrite(LedPin,(server==activeHigh)?HIGH:LOW);
  if(display&&(changed||!drawn||(uint32_t)(now-drawn)>=1000)){idleClock=digitalRead(ClockPin);idleData=digitalRead(DataPin);
@@ -35,7 +37,7 @@ void ConnectionIndicators::loop(){if(!started)return;uint32_t now=millis();if((u
   displayAck=display->render(frame.segments)&&idleClock&&idleData;if(!displayAck)++ackFailures;drawn=now;}
 }
 void ConnectionIndicators::stop(){if(enabled)digitalWrite(LedPin,activeHigh?LOW:HIGH);if(display){uint8_t blank[4]={0};display->render(blank);}server=false;started=false;}
-String ConnectionIndicators::statusJson()const{JsonDocument d;d["server_connected"]=server;d["basis"]="AUTHENTICATED_GATEWAY_RECEIPT";d["receipt_timeout_seconds"]=15;d["led_enabled"]=enabled;d["led_gpio"]=LedPin;d["led_on_requested"]=enabled&&server;d["led_active_high"]=activeHigh;
+String ConnectionIndicators::statusJson()const{JsonDocument d;bool master=configManager.get().role==DeviceRole::MASTER;d["server_connected"]=master?server:transportManager.gatewayConnected();d["master_connected"]=!master&&server;d["basis"]=configManager.get().role==DeviceRole::MASTER?"AUTHENTICATED_GATEWAY_RECEIPT":"AUTHENTICATED_MASTER_RECEIPT";d["receipt_timeout_seconds"]=IndicatorCore::receiptTimeout(configManager.get().role==DeviceRole::MASTER,configManager.get().heartbeat_seconds)/1000;d["led_enabled"]=enabled;d["led_gpio"]=LedPin;d["led_on_requested"]=enabled&&server;d["led_active_high"]=activeHigh;
  d["display_acknowledged"]=displayAck;d["display_ack_failures"]=ackFailures;d["display_idle_clk_high"]=idleClock;d["display_idle_dio_high"]=idleData;d["connection_count_since_boot"]=connections;d["connected_duration_seconds"]=server?(uint32_t)(millis()-connectedAt)/1000:0;d["display_enabled"]=bool(display);d["display_state"]=!displayRequested?"DISABLED_OR_NODE":!display?"ALLOCATION_FAILED":!idleClock||!idleData?"LINE_NOT_HIGH":displayAck?"ACKNOWLEDGED_VISUAL_UNVERIFIED":"NO_ACK";d["display_clk_gpio"]=ClockPin;d["display_dio_gpio"]=DataPin;d["display_text"]=display?frame.text:"";d["physical_visual_verified"]=false;
- if(receipt)d["gateway_ack_age_seconds"]=(uint32_t)(millis()-receipt)/1000;else d["gateway_ack_age_seconds"]=nullptr;String raw;serializeJson(d,raw);return raw;
+ const char* ageField=master?"gateway_ack_age_seconds":"master_ack_age_seconds";if(receipt)d[ageField]=(uint32_t)(millis()-receipt)/1000;else d[ageField]=nullptr;String raw;serializeJson(d,raw);return raw;
 }

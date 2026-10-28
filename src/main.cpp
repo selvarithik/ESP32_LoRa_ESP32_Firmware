@@ -16,22 +16,27 @@
 #include "roles/node.h"
 #include "core/power_manager.h"
 #include "core/connection_indicators.h"
+#include "communication/lora_transport.h"
+#include "config/hardware_profile.h"
+namespace {bool roleReady=false,identityReady=false;}
 
 void setup() {
     logger.begin(115200);
     if(!configManager.begin())logger.error("CONFIG","NVS unavailable; restart required before commissioning");
     mqttStaging.begin();Commissioning::begin();
-    deviceIdentity.begin();systemManager.begin();watchdogManager.begin(10);
+    identityReady=deviceIdentity.begin();systemManager.begin();watchdogManager.begin(10);
     logger.info("IDENTITY","Device ID: "+deviceIdentity.deviceId()+" Role: "+configManager.roleString());
     connectionIndicators.begin();
     wifiManager.begin(configManager.get());meshManager.begin(configManager.get());
-    transportManager.begin();sensorManager.begin();
-    if(configManager.get().role==DeviceRole::MASTER)masterRole.begin();else nodeRole.begin();
+    roleReady=identityReady&&HardwareProfile::roleMatches(configManager.get().role==DeviceRole::MASTER);
+    loraTransport.begin(configManager.get());sensorManager.begin();
+    if(roleReady){transportManager.begin();if(configManager.get().role==DeviceRole::MASTER)masterRole.begin();else nodeRole.begin();}
+    else logger.error("CONFIG","Build/stored-role or hardware identity mismatch; local recovery only. NVS preserved.");
     powerManager.begin();localWebServer.begin();
-    logger.info("SYSTEM","Device Wi-Fi services ready; E220/Ethernet drivers NOT_AVAILABLE");
+    logger.info("SYSTEM","Device services ready; inspect radio status for enablement/settings (Ethernet unavailable)");
 }
 void loop() {
-    watchdogManager.feed();Commissioning::loop();mqttStaging.loop();wifiManager.loop();
-    if(configManager.get().role==DeviceRole::MASTER)masterRole.loop();else nodeRole.loop();
+    watchdogManager.feed();Commissioning::loop();mqttStaging.loop();wifiManager.loop();transportManager.loop();
+    if(roleReady){if(configManager.get().role==DeviceRole::MASTER)masterRole.loop();else nodeRole.loop();}
     connectionIndicators.loop();localWebServer.loop();delay(2);
 }

@@ -9,13 +9,16 @@ public:
     bool send(const Message& message, const String& host = "", bool gateway = false);
     bool receive(Message& message, String& remote, bool& gateway);
     bool enqueue(const String& raw, const String& remote, bool gateway = false);
-    bool delivery(String& id, bool& success, bool& gateway);
+    bool delivery(String& id, bool& success, bool& gateway, int& error);
     uint32_t minimumStackFreeBytes() const;
     bool gatewayConnected() const;
     bool mqttConnected() const;
     uint32_t lastSuccess() const;
     uint32_t lastGatewayReceipt() const;
+    uint32_t lastMasterReceipt() const;
+    void masterReceipt();
     uint32_t dropped() const;
+    const char* inboundError() const;
     void gatewayReceipt();
     bool idle() const;
     String masterAddress() const;

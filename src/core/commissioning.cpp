@@ -1,4 +1,9 @@
+#include "../communication/canonical_mqtt.h"
 #include "../sensors/sensor_manager.h"
+#include "../config/hardware_profile.h"
+#include "commissioning_role_core.h"
+#include "network_commission_core.h"
+#include "../communication/lora_transport.h"
 #include "commissioning.h"
 #include "connection_indicators.h"
 #include "config_manager.h"
@@ -51,16 +56,32 @@ void dispatch(){
     if(op=="status"&&d.size()==1){
         JsonDocument out;out["ok"]=true;out["device_id"]=configManager.get().device_id;out["username"]=accountName;out["password_change_required"]=required();out["station_ip"]=WiFi.localIP().toString();out["ap_ip"]=WiFi.softAPIP().toString();out["free_heap"]=ESP.getFreeHeap();out["loop_stack_free_min_bytes"]=uxTaskGetStackHighWaterMark(nullptr);out["network_stack_free_min_bytes"]=transportManager.minimumStackFreeBytes();out["free_8bit_heap"]=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_8bit_block"]=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_free_block"]=ESP.getMaxAllocHeap();out["minimum_free_heap"]=ESP.getMinFreeHeap();out["uptime_ms"]=millis();out["unix_time"]=time(nullptr);
         JsonDocument mqtt;deserializeJson(mqtt,mqttStaging.status(false));out["mqtt"]=mqtt;
-        JsonDocument local;deserializeJson(local,transportManager.localStatus());out["local_ip"]=local;out["role"]=configManager.roleString();out["dht_enabled"]=configManager.get().dht_enabled;out["dht_pin"]=configManager.get().dht_pin;out["ina219_enabled"]=configManager.get().ina219_enabled;out["mq135_enabled"]=configManager.get().mq135_enabled;JsonDocument sensors;sensors.to<JsonArray>();for(unsigned i=0;i<3;++i){JsonDocument reading;deserializeJson(reading,sensorManager.telemetryJson(i));sensors.as<JsonArray>().add(reading);}out["sensors"]=sensors;JsonDocument indicators;deserializeJson(indicators,connectionIndicators.statusJson());out["indicators"]=indicators;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
+        JsonDocument local;deserializeJson(local,transportManager.localStatus());out["local_ip"]=local;out["role"]=configManager.roleString();JsonDocument radio;deserializeJson(radio,loraTransport.statusJson());out["radio"]=radio;out["dht_enabled"]=configManager.get().dht_enabled;out["dht_pin"]=configManager.get().dht_pin;out["ina219_enabled"]=configManager.get().ina219_enabled;out["mq135_enabled"]=configManager.get().mq135_enabled;JsonDocument sensors;sensors.to<JsonArray>();for(unsigned i=0;i<3;++i){JsonDocument reading;deserializeJson(reading,sensorManager.telemetryJson(i));sensors.as<JsonArray>().add(reading);}out["sensors"]=sensors;JsonDocument indicators;deserializeJson(indicators,connectionIndicators.statusJson());out["indicators"]=indicators;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
+    }else if(op=="apply_build_role"){
+        if(d.size()!=2||!d["confirm_device_id"].is<const char*>()||!CommissioningRoleCore::confirmed(HardwareProfile::ExplicitRole,configManager.get().device_id.c_str(),d["confirm_device_id"].as<const char*>())){reply(false,"IDENTITY_OR_EXPLICIT_BUILD_REQUIRED");return;}
+        JsonDocument change;change["role"]=HardwareProfile::Master?"MASTER":"NODE";
+        if(CommissioningRoleCore::clearSelfAssignment(HardwareProfile::Master,configManager.get().device_id.c_str(),configManager.get().master_id.c_str()))change["master_id"]="";
+        String raw,error;serializeJson(change,raw);reply(configManager.update(raw,error),"BUILD_ROLE_RESULT_RESTART_REQUIRED");
+    }else if(op=="network_config"){
+        // Physical USB only. First-use web/account protections stay unchanged.
+        auto change=d["config"].as<JsonObjectConst>();
+        bool valid=d.size()==3&&d["confirm_device_id"].is<const char*>()&&CommissioningRoleCore::confirmed(HardwareProfile::ExplicitRole,configManager.get().device_id.c_str(),d["confirm_device_id"].as<const char*>())&&!change.isNull()&&NetworkCommissionCore::count(change.size());
+        for(JsonPairConst item:change)if(!NetworkCommissionCore::allowed(item.key().c_str()))valid=false;
+        if(!valid){reply(false,"NETWORK_FIELDS_OR_IDENTITY_INVALID");return;}
+        String raw,error;serializeJson(change,raw);reply(configManager.update(raw,error),"NETWORK_RESULT_RESTART_REQUIRED");
     }else if(op=="self_test"&&d.size()==1){
         uint32_t started=millis();bool ok=derive("public-pbkdf2-fixture","00112233445566778899aabbccddeeff")=="71c9db0332994401d7d514fe7cd8fc4ca25d7286a222e83ea86d32600f7410e0";
         JsonDocument out;out["ok"]=ok;out["elapsed_ms"]=millis()-started;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
+    }else if(op=="mqtt_reconnect"){
+        if(d.size()!=2||d["confirm_device_id"].as<String>()!=configManager.get().device_id){reply(false,"IDENTITY_CONFIRMATION_REQUIRED");return;}
+        CanonicalMqtt::requestReconnect();reply(true,"MQTT_RUNTIME_RECONNECT_REQUESTED");
     }else if(op=="time"){
         if(d.size()!=2||d["unix_time"].is<bool>()||!d["unix_time"].is<uint32_t>()||d["unix_time"].as<uint32_t>()<1700000000||d["unix_time"].as<uint32_t>()>4102444800UL){reply(false,"INVALID_TIME");return;}
         timeval now{};now.tv_sec=d["unix_time"].as<uint32_t>();reply(settimeofday(&now,nullptr)==0,"USB_CLOCK_RESULT");
     }else if(op=="recover_account"){
         if(d.size()!=2||d["confirm_device_id"].as<String>()!=configManager.get().device_id){reply(false,"IDENTITY_CONFIRMATION_REQUIRED");return;}
         reply(setPassword("admin",true,"admin"),"ACCOUNT_RECOVERY_PASSWORD_CHANGE_REQUIRED");
+    }else if(op=="radio_probe"){if(d.size()!=2||d["confirm"].as<String>()!="READ_ONLY_E220_SETTINGS"){reply(false,"CONFIRMATION_REQUIRED");return;}reply(loraTransport.requestProbe(),"RADIO_PROBE_REQUESTED_NO_REGISTER_WRITES");
     }else if(op=="password"){
         String p=d["password"]|"";
         if(d.size()!=2||p.length()<12||p.length()>64||p=="admin"){reply(false,"INVALID_PASSWORD");return;}
@@ -68,9 +89,17 @@ void dispatch(){
     }else if(op=="config"){
         if(mustChange){reply(false,"PASSWORD_CHANGE_REQUIRED");return;}
         auto v=d["config"].as<JsonObjectConst>();bool valid=d.size()==2&&!v.isNull();
-        for(JsonPairConst p:v){String k=p.key().c_str();if(k!="wifi_ssid"&&k!="wifi_password"&&k!="setup_password"&&k!="mesh_key"&&k!="gateway_token"&&k!="local_ip_token"&&k!="role"&&k!="local_ip_enabled"&&k!="routing_policy"&&k!="server_host"&&k!="server_port"&&k!="server_https"&&k!="master_host"&&k!="master_id"&&k!="allowed_peers_csv"&&k!="dht_enabled"&&k!="dht_pin"&&k!="server_led_enabled"&&k!="server_led_active_high"&&k!="tm1637_enabled"&&k!="ina219_enabled"&&k!="ina219_address"&&k!="ina219_shunt_milliohms"&&k!="mq135_enabled"&&k!="mq135_warmup_seconds"&&k!="heartbeat_seconds"&&k!="telemetry_seconds"&&k!="wifi_dhcp"&&k!="wifi_ip"&&k!="wifi_subnet"&&k!="wifi_gateway"&&k!="wifi_dns")valid=false;}
+        for(JsonPairConst p:v){String k=p.key().c_str();if(!k.startsWith("lora_")&&k!="wifi_ssid"&&k!="wifi_password"&&k!="setup_password"&&k!="mesh_key"&&k!="gateway_token"&&k!="local_ip_token"&&k!="role"&&k!="local_ip_enabled"&&k!="routing_policy"&&k!="server_host"&&k!="server_port"&&k!="server_https"&&k!="master_host"&&k!="master_id"&&k!="allowed_peers_csv"&&k!="dht_enabled"&&k!="dht_pin"&&k!="server_led_enabled"&&k!="server_led_active_high"&&k!="tm1637_enabled"&&k!="ina219_enabled"&&k!="ina219_address"&&k!="ina219_shunt_milliohms"&&k!="mq135_enabled"&&k!="mq135_warmup_seconds"&&k!="heartbeat_seconds"&&k!="telemetry_seconds"&&k!="wifi_dhcp"&&k!="wifi_ip"&&k!="wifi_subnet"&&k!="wifi_gateway"&&k!="wifi_dns")valid=false;}
         if(!valid){reply(false,"INVALID_REQUEST");return;}
         String raw,error;serializeJson(v,raw);reply(configManager.update(raw,error),"CONFIG_RESULT_RESTART_REQUIRED");
+    }else if(op=="mqtt_prepare"){
+        // Physical bootstrap for the Gateway's canonical prepare message. The
+        // staging engine still verifies digest, deadline and peer proofs.
+        if(mustChange){reply(false,"PASSWORD_CHANGE_REQUIRED");return;}
+        JsonDocument current;deserializeJson(current,mqttStaging.status(false));
+        auto control=d["control"].as<JsonObjectConst>();
+        if(configManager.get().role!=DeviceRole::MASTER||d.size()!=3||!d["expected_revision"].is<uint32_t>()||d["expected_revision"].is<bool>()||d["expected_revision"].as<uint32_t>()!=current["revision"].as<uint32_t>()||control.isNull()||control.size()!=6||control["op"].as<String>()!="SWITCH_PREPARE"||control["participant"].as<String>()!="GATEWAY") {reply(false,"INVALID_PREPARE_REQUEST");return;}
+        String raw;serializeJson(control,raw);mqttStaging.control(raw);reply(true,"PREPARE_REQUEST_SUBMITTED");
     }else if(op=="mqtt_action"){
         if(mustChange){reply(false,"PASSWORD_CHANGE_REQUIRED");return;}
         String action=d["action"]|"";
@@ -93,6 +122,8 @@ bool begin(){
 bool required(){return !available||mustChange;}
 const String& username(){return accountName;}
 uint32_t credentialGeneration(){return generation;}
+Verification captureVerification(const String& user,const String& password){Verification v;v.password=password;v.salt=salt;v.verifier=verifier;v.userMatches=available&&user==accountName;return v;}
+bool verifyCaptured(Verification& v){bool ok=equal(derive(v.password,v.salt),v.verifier)&&v.userMatches;v.password="";v.salt="";v.verifier="";return ok;}
 bool verifyCredentials(const String& user,const String& password){
     if(!available||user!=accountName||password.length()>64)return false;
     return equal(derive(password,salt),verifier);

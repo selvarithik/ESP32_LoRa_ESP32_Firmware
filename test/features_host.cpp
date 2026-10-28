@@ -10,6 +10,8 @@ int main(int argc,char** argv){
  if(argc==3&&std::string(argv[1])=="radio"){std::string hex=argv[2];if(hex.size()%2||hex.size()>480)return 2;uint8_t raw[240];size_t n=hex.size()/2;for(size_t i=0;i<n;++i){char byte[3]={hex[i*2],hex[i*2+1],0};raw[i]=strtoul(byte,nullptr,16);}RadioFrame::Frame f;if(!RadioFrame::decode(raw,n,f))return 2;uint8_t out[240];size_t count=RadioFrame::encode(f,out,240);for(size_t i=0;i<count;++i)std::cout<<std::hex<<std::setfill('0')<<std::setw(2)<<unsigned(out[i]);return 0;}
  if(argc==7&&std::string(argv[1])=="network"){std::cout<<FeatureCore::staticNetwork(argv[2],argv[3],argv[4],argv[5],argv[6]);return 0;}
  if(argc==8&&std::string(argv[1])=="sleep"){FeatureCore::Schedule s;s.enabled=atoi(argv[3]);s.start=atoi(argv[4]);s.duration=atoi(argv[5]);s.days=atoi(argv[6]);s.offset=atoi(argv[7]);std::cout<<FeatureCore::sleepRemaining(s,atoll(argv[2]));return 0;}
+ assert(IndicatorCore::receiptTimeout(true,30)==15000);assert(IndicatorCore::receiptTimeout(false,30)==65000);
+ assert(IndicatorCore::connected(true,60000,1000,65000));assert(!IndicatorCore::connected(true,66000,1000,65000));
  assert(!IndicatorCore::connected(true,1,0));assert(!IndicatorCore::connected(false,1000,900));assert(IndicatorCore::connected(true,1000,900));
  assert(IndicatorCore::connected(true,15999,1000));assert(!IndicatorCore::connected(true,16000,1000));
  assert(IndicatorCore::connected(true,100,0xfffffff0));assert(!IndicatorCore::connected(true,16000,0xfffffff0));

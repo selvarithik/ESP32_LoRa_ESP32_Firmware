@@ -68,7 +68,7 @@ bool ConfigManager::begin() {
     // Migrate the original per-key schema without changing an established identity.
     _config.device_id=readStoredString("device_id",_config.device_id);
     _config.device_name=readStoredString("device_name",_config.device_name);
-    _config.role=readStoredString("role","NODE")=="MASTER"?DeviceRole::MASTER:DeviceRole::NODE;
+    _config.role=readStoredString("role",_config.role==DeviceRole::MASTER?"MASTER":"NODE")=="MASTER"?DeviceRole::MASTER:DeviceRole::NODE;
     _config.master_id=readStoredString("master_id","");
     _config.wifi_ssid=readStoredString("wifi_ssid","");
     _config.wifi_password=readStoredString("wifi_pass","");
@@ -146,7 +146,7 @@ bool ConfigManager::validate(const DeviceConfig& c, String& error) const {
     REQUIRE(c.ina219_address>=64&&c.ina219_address<=79,"INA219 address must be 64..79")
     REQUIRE(c.ina219_shunt_milliohms<=1000,"INA219 shunt must be 0 (unknown) or 1..1000 milliohms")
     REQUIRE(c.mq135_warmup_seconds>=60&&c.mq135_warmup_seconds<=604800,"MQ135 warmup must be 60..604800 seconds")
-    REQUIRE(!c.ina219_enabled||!c.dht_enabled||(c.dht_pin!=21&&c.dht_pin!=22),"DHT pin conflicts with INA219 I2C")
+    REQUIRE(!HardwareProfile::inaAllowed(c.role==DeviceRole::MASTER)||!c.ina219_enabled||!c.dht_enabled||(c.dht_pin!=21&&c.dht_pin!=22),"DHT pin conflicts with INA219 I2C")
     if (!c.wifi_dhcp) REQUIRE(FeatureCore::staticNetwork(c.wifi_ip.c_str(),c.wifi_subnet.c_str(),c.wifi_gateway.c_str(),c.wifi_dns.c_str(),c.wifi_dns2.c_str()),"Invalid static IPv4 mask, host, gateway or DNS")
     if(!c.wifi_dns2.isEmpty()){uint32_t dns;REQUIRE(FeatureCore::ipv4(c.wifi_dns2.c_str(),dns)&&FeatureCore::unicast(dns),"Invalid secondary DNS")}
     FeatureCore::Schedule schedule;schedule.enabled=c.sleep_enabled;schedule.start=c.sleep_start_minute;schedule.duration=c.sleep_duration_seconds;schedule.days=c.sleep_days_mask;schedule.offset=c.utc_offset_minutes;

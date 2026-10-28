@@ -3,7 +3,8 @@
 #include <stdio.h>
 namespace IndicatorCore {
 constexpr uint32_t FreshnessMs=15000;
-inline bool connected(bool wifi,uint32_t now,uint32_t receipt){return wifi&&receipt&&(uint32_t)(now-receipt)<FreshnessMs;}
+inline bool connected(bool wifi,uint32_t now,uint32_t receipt,uint32_t timeout=FreshnessMs){return wifi&&receipt&&(uint32_t)(now-receipt)<timeout;}
+inline uint32_t receiptTimeout(bool master,uint32_t heartbeatSeconds){return master?FreshnessMs:(heartbeatSeconds*2+5)*1000UL;}
 inline bool pinConflict(bool master,bool display,bool dht,int dhtPin,bool led,bool radio,int rx,int tx,int aux,int m0,int m1){
  if(master&&display&&dht&&(dhtPin==18||dhtPin==19))return true;
  int pins[]={rx,tx,aux,m0,m1};if(radio)for(int pin:pins)if((led&&pin==2)||(master&&display&&(pin==18||pin==19)))return true;

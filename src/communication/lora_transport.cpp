@@ -1,117 +1,63 @@
 #include "lora_transport.h"
+#include "e220_core.h"
+#include "../config/hardware_profile.h"
 #include "../core/logger.h"
-
+#include <esp_mac.h>
+#include <esp_system.h>
+#include <mbedtls/md.h>
+#include <memory>
+#include <new>
 LoRaTransport loraTransport;
-
-#if defined(ENABLE_E220_DRIVER)
-
-bool LoRaTransport::begin(const DeviceConfig& config) {
-    _initialized=false;
-    if(!config.lora_enabled||config.lora_uart!=2)return false;
-    _rxPin = config.lora_rx_pin;
-    _txPin = config.lora_tx_pin;
-    _auxPin = config.lora_aux_pin;
-    _m0Pin = config.lora_m0_pin;
-    _m1Pin = config.lora_m1_pin;
-
-    pinMode(_auxPin, INPUT_PULLUP);
-    pinMode(_m0Pin, OUTPUT);
-    pinMode(_m1Pin, OUTPUT);
-
-    // Transparent UART mode: M0=LOW, M1=LOW.
-    digitalWrite(_m0Pin, LOW);
-    digitalWrite(_m1Pin, LOW);
-
-    _serial.begin(config.lora_baud, SERIAL_8N1, _rxPin, _txPin);
-    _initialized = false;
-
-    if (waitAux(1500)) {
-        logger.info("LORA", "E220 UART transport initialized");
-        _initialized = true;
-    } else {
-        logger.warn("LORA", "E220 AUX not ready; transport unavailable");
-        _serial.end();
-    }
-
-    return _initialized;
+namespace {
+HardwareSerial uart(2);DeviceConfig config;
+enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Restoring,Ready,Fault};
+State state=State::Off;const char* error="DISABLED";bool initialized=false,probeOnly=false,restoreHigh0=false,restoreHigh1=false;
+uint32_t since=0,auxSince=0,nextTx=0,rxAt=0,txStarted=0;bool auxHigh=false;
+E220Core::Settings observed;bool observedValid=false;uint8_t settingsBytes[9]{};unsigned settingsLength=0;
+uint8_t ownMac[6]{},target[6]{},senderMac[6]{};uint32_t transfer=0,rxCount=0,txCount=0,rejected=0,timeouts=0,authFailures=0,completed=0;
+E220Core::Assembler assemblies;
+uint8_t encoded[202]{},raw[200]{},rxEncoded[202]{};size_t rxLength=0;
+uint8_t txData[E220Core::MaxMessage]{};size_t txLength=0;uint8_t txPart=0;String txId,lastSender,resultId;bool resultOk=false,hasResult=false,rxReady=false,skipRssi=false;
+Message received;
+struct Seen {uint8_t sender[6]{};uint32_t transfer=0,crc=0,at=0;bool used=false;};Seen seen[32];uint8_t seenNext=0;
+bool mac(const String& id,uint8_t* out){if(id=="BROADCAST"){memset(out,255,6);return true;}if(id.length()==18&&id.startsWith("ESP32-")){for(int i=0;i<6;++i){String piece=id.substring(6+(5-i)*2,8+(5-i)*2);char* end=nullptr;unsigned n=strtoul(piece.c_str(),&end,16);if(!end||*end)return false;out[i]=n;}return true;}unsigned values[6];char extra;if(sscanf(id.c_str(),"%2x:%2x:%2x:%2x:%2x:%2x%c",&values[0],&values[1],&values[2],&values[3],&values[4],&values[5],&extra)!=6||id.length()!=17)return false;for(int i=0;i<6;++i)out[i]=values[i];return true;}
+String identity(const uint8_t* bytes){char value[19];snprintf(value,sizeof(value),"ESP32-%02X%02X%02X%02X%02X%02X",bytes[5],bytes[4],bytes[3],bytes[2],bytes[1],bytes[0]);return value;}
+bool tag(const uint8_t* data,size_t n,uint8_t* output){return !mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),(const unsigned char*)config.mesh_key.c_str(),config.mesh_key.length(),data,n,output);}
+bool matches(){return observed.baud==config.lora_baud&&observed.address==(uint16_t(config.lora_address_high)<<8|config.lora_address_low)&&observed.channel==config.lora_channel&&observed.airRate==config.lora_air_rate&&observed.power==config.lora_tx_power&&observed.fixed==config.lora_fixed_mode&&observed.rssi==config.lora_rssi&&observed.lbt==config.lora_lbt;}
+void restore(const char* reason){error=reason;digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);uart.updateBaudRate(config.lora_baud);state=State::Restoring;since=millis();initialized=false;}
+size_t pack(const Message& m,uint8_t* out){JsonDocument payload,doc;if(deserializeJson(payload,m.payload)||!payload.is<JsonObject>())return 0;auto a=doc.to<JsonArray>();a.add(m.protocolVersion);a.add(m.typeString());a.add(m.ttl);a.add(m.timestamp);a.add(m.sequence);a.add(m.messageId);a.add(m.source);a.add(m.destination);a.add(m.nextHop);a.add(m.origin.isEmpty()?m.source:m.origin);a.add(m.correlationId);a.add(payload.as<JsonVariant>());a.add(m.radioHopCount+1);a.add(m.radioMaxHops?m.radioMaxHops:m.ttl);size_t n=measureMsgPack(doc);return n<=E220Core::MaxMessage?serializeMsgPack(doc,out,E220Core::MaxMessage):0;}
+bool unpack(const uint8_t* bytes,size_t n,Message& m){JsonDocument d;if(deserializeMsgPack(d,bytes,n)||!d.is<JsonArray>()||d.size()!=14)return false;auto a=d.as<JsonArray>();if(!a[0].is<uint8_t>()||!a[1].is<const char*>()||!a[2].is<uint8_t>()||!a[3].is<uint32_t>()||!a[4].is<uint32_t>()||!a[11].is<JsonObject>()||!a[12].is<uint8_t>()||!a[13].is<uint8_t>()||a[12].as<unsigned>()<1||a[13].as<unsigned>()>15||a[12].as<unsigned>()>a[13].as<unsigned>())return false;for(unsigned i=5;i<11;++i)if(!a[i].is<const char*>()||a[i].as<String>().length()>48)return false;Message p;p.protocolVersion=a[0];p.type=packetTypeFromString(a[1]);p.ttl=a[2];p.timestamp=a[3];p.sequence=a[4];p.messageId=a[5].as<String>();p.source=a[6].as<String>();p.destination=a[7].as<String>();p.nextHop=a[8].as<String>();p.origin=a[9].as<String>();p.correlationId=a[10].as<String>();serializeJson(a[11],p.payload);if(!Message::fromJson(p.toJson(),m))return false;m.radioHopCount=a[12];m.radioMaxHops=a[13];return true;}
+void receiveFrame(){size_t n=E220Core::cobsDecode(rxEncoded,rxLength,raw,sizeof(raw));if(n<=E220Core::Header+E220Core::Tag){++rejected;return;}uint8_t signature[32];size_t body=n-E220Core::Tag;if(!tag(raw,body,signature)){++authFailures;return;}uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[body+i];if(diff){++authFailures;return;}E220Core::Fragment f;if(!E220Core::parse(raw,body,f)){++rejected;return;}uint8_t broadcast[6];memset(broadcast,255,6);if(memcmp(f.target,ownMac,6)&&memcmp(f.target,broadcast,6))return;if(!memcmp(f.sender,ownMac,6))return;
+ for(auto& item:seen)if(item.used&&millis()-item.at<E220Core::AssemblyLifetime&&item.transfer==f.transfer&&!memcmp(item.sender,f.sender,6)){return;}
+ auto* message=assemblies.add(f,millis());if(!message)return;
+ Message parsed;if(!rxReady&&unpack(message->data,message->total,parsed)){received=parsed;lastSender=identity(f.sender);memcpy(senderMac,f.sender,6);rxReady=true;++rxCount;auto& item=seen[seenNext++%32];item.used=true;item.transfer=f.transfer;item.crc=f.crc;item.at=millis();memcpy(item.sender,f.sender,6);}else ++rejected;message->used=false;
 }
-
-bool LoRaTransport::waitAux(uint32_t timeoutMs) const {
-    uint32_t start = millis();
-    while ((millis() - start) < timeoutMs) {
-        if (digitalRead(_auxPin) == HIGH) return true;
-        delay(2);
-    }
-    return false;
 }
-
-bool LoRaTransport::auxReady() const {
-    return digitalRead(_auxPin) == HIGH;
+bool LoRaTransport::begin(const DeviceConfig& c){config=c;state=State::Off;error="DISABLED";initialized=false;esp_read_mac(ownMac,ESP_MAC_WIFI_STA);if(!HardwareProfile::roleMatches(c.role==DeviceRole::MASTER)){error="BUILD_ROLE_MISMATCH";return false;}uint8_t configuredMac[6];if(!mac(c.device_id,configuredMac)||memcmp(configuredMac,ownMac,6)){error="IDENTITY_NOT_HARDWARE_MAC";return false;}if(!c.lora_enabled)return false;probeOnly=false;return requestProbe(false);}
+bool LoRaTransport::requestProbe(bool readOnly){if(!HardwareProfile::roleMatches(config.role==DeviceRole::MASTER)){error="BUILD_ROLE_MISMATCH";return false;}uint8_t configuredMac[6];if(!mac(config.device_id,configuredMac)||memcmp(configuredMac,ownMac,6)){error="IDENTITY_NOT_HARDWARE_MAC";return false;}if(state!=State::Off&&state!=State::Fault)return false;probeOnly=readOnly||!config.lora_enabled;if(config.lora_uart!=2||config.lora_rx_pin!=HardwareProfile::RadioRx||config.lora_tx_pin!=HardwareProfile::RadioTx||config.lora_aux_pin!=HardwareProfile::RadioAux||config.lora_m0_pin!=HardwareProfile::RadioM0||config.lora_m1_pin!=HardwareProfile::RadioM1){error="UNVERIFIED_RADIO_PINS";return false;}if(!probeOnly&&config.mesh_key.length()<32){error="MESH_CREDENTIAL_REQUIRED";return false;}
+ pinMode(config.lora_aux_pin,INPUT);pinMode(config.lora_m0_pin,INPUT);pinMode(config.lora_m1_pin,INPUT);restoreHigh0=digitalRead(config.lora_m0_pin);restoreHigh1=digitalRead(config.lora_m1_pin);digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);pinMode(config.lora_m0_pin,OUTPUT);pinMode(config.lora_m1_pin,OUTPUT);uart.setRxBufferSize(512);uart.setTxBufferSize(256);uart.begin(9600,SERIAL_8N1,config.lora_rx_pin,config.lora_tx_pin);observedValid=false;observed=E220Core::Settings{};state=State::WaitIdle;since=millis();auxSince=since;auxHigh=false;error="INSPECTING";return true;}
+void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==State::Fault)return;bool high=auxReady();if(high&&!auxHigh)auxSince=now;auxHigh=high;
+ if(state!=State::Ready&&state!=State::Restoring&&now-since>3000){++timeouts;restore("SETTINGS_READ_TIMEOUT");return;}
+ if(state==State::WaitIdle&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,HIGH);digitalWrite(config.lora_m1_pin,HIGH);state=State::WaitMode;since=now;auxSince=now;return;}
+ if(state==State::WaitMode&&high&&now-since>=5&&now-auxSince>=2){for(unsigned drain=0;drain<512&&uart.available();++drain)uart.read();const uint8_t query[]={0xc1,0,6};if(uart.availableForWrite()<3)return;uart.write(query,3);settingsLength=0;state=State::Reading;since=now;return;}
+ if(state==State::Reading){for(unsigned budget=0;budget<32&&uart.available()&&settingsLength<9;++budget)settingsBytes[settingsLength++]=uart.read();if(settingsLength<9)return;observedValid=E220Core::settings(settingsBytes,9,observed);if(!observedValid){restore("INVALID_PUBLIC_SETTINGS");return;}if(probeOnly){restore("PROBE_COMPLETE_NO_RF");return;}if(!matches()){restore("SETTINGS_MISMATCH_NO_RF");return;}if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return;}digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,LOW);uart.updateBaudRate(observed.baud);state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
+ if(state==State::Restoring){if(high&&now-since>=5&&now-auxSince>=2){if(!strcmp(error,"STARTING_NORMAL_MODE")){state=State::Ready;initialized=true;error="NONE";logger.info("LORA","Read-only settings check passed; normal mode ready (hardware link unverified)");}else{state=State::Fault;uart.end();}}else if(now-since>3000){state=State::Fault;uart.end();error="MODE_RESTORE_TIMEOUT";++timeouts;}return;}
+ if(state!=State::Ready)return;
+ assemblies.expire(now);if(rxLength&&now-rxAt>1000){rxLength=0;++rejected;}
+ for(unsigned budget=0;budget<256&&uart.available();++budget){uint8_t b=uart.read();rxAt=now;if(skipRssi){skipRssi=false;continue;}if(!b){if(rxLength){receiveFrame();rxLength=0;skipRssi=observed.rssi;}}else if(rxLength<sizeof(rxEncoded))rxEncoded[rxLength++]=b;else{rxLength=0;++rejected;}}
+ if(txLength&&now-txStarted>config.message_max_age_ms){txLength=0;hasResult=true;resultId=txId;resultOk=false;error=high?"MESSAGE_TX_EXPIRED":"AUX_BUSY_TIMEOUT";++timeouts;}
+ if(!txLength||!high||now-auxSince<2||(int32_t)(now-nextTx)<0)return;
+ uint8_t step=E220Core::span(observed.packet);size_t n=E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw);uint8_t signature[32];if(!n||!tag(raw,n,signature)){txLength=0;return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){txLength=0;++rejected;return;}size_t prefix=observed.fixed?3:0;if(uart.availableForWrite()<int(n+prefix))return;if(prefix){uint8_t address[]={255,255,observed.channel};uart.write(address,3);}if(uart.write(encoded,n)!=n){txLength=0;++timeouts;return;}++txCount;++txPart;
+ // AUX reflects UART/module buffering, not an application ACK. Keep a conservative airtime guard.
+ static const uint32_t rates[]={2400,2400,2400,4800,9600,19200,38400,62500};uint32_t guard=uint32_t(n)*12000/observed.baud+uint32_t(n)*16000/rates[observed.airRate]+50+(observed.lbt?2000:0);nextTx=now+guard;
+ if(size_t(txPart)*step>=txLength){txLength=0;hasResult=true;resultId=txId;resultOk=true;++completed;}
 }
-
-bool LoRaTransport::send(const Message& message) {
-    if (!_initialized) return false;
-    if (!auxReady()) return false;
-
-    String serialized = message.toJson();
-    if (serialized.length()>MAX_FRAME_BYTES || _serial.availableForWrite()<int(serialized.length()+2))return false;
-    size_t written = _serial.println(serialized);
-
-    return written == serialized.length()+2; // UART queue acceptance, never a radio ACK.
-}
-
-bool LoRaTransport::available() {
-    return _serial.available() > 0;
-}
-
-bool LoRaTransport::receive(Message& message) {
-    if(!_initialized)return false;
-    for(unsigned budget=0;budget<128&&_serial.available();++budget) {
-        char ch = static_cast<char>(_serial.read());
-
-        if (ch == '\n') {
-            if(_discardRx){_discardRx=false;_lineBuffer.clear();continue;}
-            String line = _lineBuffer;
-            _lineBuffer.clear();
-            line.trim();
-
-            if (line.length() == 0) continue;
-
-            if (Message::fromJson(line, message)) {
-                return true;
-            }
-
-            logger.warn("LORA", "Discarded invalid packet");
-        } else if (ch != '\r'&&!_discardRx) {
-            if (_lineBuffer.length() < MAX_FRAME_BYTES) {
-                _lineBuffer += ch;
-            } else {
-                _lineBuffer.clear();
-                _discardRx=true;
-                logger.warn("LORA", "RX buffer overflow; packet discarded");
-            }
-        }
-    }
-
-    return false;
-}
-
-void LoRaTransport::loop() {
-    // RX is drained by the application loop.
-}
-
-bool LoRaTransport::isInitialized() const {
-    return _initialized;
-}
-
-#else
-bool LoRaTransport::begin(const DeviceConfig&) { return false; }
-bool LoRaTransport::send(const Message&) { return false; }
-bool LoRaTransport::available() { return false; }
-bool LoRaTransport::receive(Message&) { return false; }
-void LoRaTransport::loop() {}
-bool LoRaTransport::auxReady() const { return false; }
-bool LoRaTransport::isInitialized() const { return false; }
-bool LoRaTransport::waitAux(uint32_t) const { return false; }
-#endif
-
+bool LoRaTransport::send(const Message& m){if(m.radioMaxHops&&m.radioHopCount>=m.radioMaxHops)return false;if(!initialized||txLength||hasResult||(int32_t)(millis()-nextTx)<0||m.payload.length()>MAX_PAYLOAD_BYTES)return false;Message checked;if(!Message::fromJson(m.toJson(),checked))return false;if(!mac(m.nextHop.isEmpty()?m.destination:m.nextHop,target))return false;txLength=pack(m,txData);if(!txLength)return false;uint8_t step=E220Core::span(observed.packet);if((txLength+step-1)/step>255){txLength=0;return false;}txPart=0;txId=m.messageId;transfer=esp_random();txStarted=millis();return true;}
+bool LoRaTransport::available(){return rxReady;}
+bool LoRaTransport::receive(Message& m){if(!rxReady)return false;m=received;rxReady=false;return true;}
+bool LoRaTransport::auxReady()const{return state!=State::Off&&state!=State::Fault&&digitalRead(config.lora_aux_pin)==HIGH;}
+bool LoRaTransport::isInitialized()const{return initialized;}
+bool LoRaTransport::idle()const{return !txLength&&!rxReady&&!hasResult&&(int32_t)(millis()-nextTx)>=0;}
+String LoRaTransport::sender()const{return lastSender;}
+bool LoRaTransport::delivery(String& id,bool& ok){if(!hasResult)return false;id=resultId;ok=resultOk;hasResult=false;return true;}
+String LoRaTransport::statusJson()const{JsonDocument d;d["state"]=initialized?"READY_LINK_UNVERIFIED":state==State::Off?"DISABLED":state==State::Fault?"ERROR":"INSPECTING";d["error"]=error;d["module"]="E220-900T22D";d["hardware_link_verified"]=false;d["public_settings_read"]=observedValid;d["register_writes"]=0;d["aux_ready"]=auxReady();d["tx_pending"]=txLength>0;d["tx_uart_fragments"]=txCount;d["rx_messages"]=rxCount;d["rejected"]=rejected;d["auth_failures"]=authFailures;d["timeouts"]=timeouts;d["reassembly_expired"]=assemblies.expired;d["reassembly_duplicates"]=assemblies.duplicates;d["completed_uart_transfers"]=completed;d["rssi_dbm"]=nullptr;d["snr_db"]=nullptr;if(observedValid){auto s=d["observed"].to<JsonObject>();s["address"]=observed.address;s["baud"]=observed.baud;s["channel"]=observed.channel;s["air_rate_code"]=observed.airRate;s["power_dbm"]=observed.power;s["subpacket_bytes"]=observed.packet;s["fixed_mode"]=observed.fixed;s["rssi_enabled"]=observed.rssi;s["lbt"]=observed.lbt;}String out;serializeJson(d,out);return out;}

@@ -3,9 +3,11 @@ from pathlib import Path
 import json
 import struct
 import subprocess
+import argparse
 
 root=Path(__file__).resolve().parents[1]
-build=root/'.pio/build/esp32dev';raw=(build/'partitions.bin').read_bytes()
+parser=argparse.ArgumentParser();parser.add_argument('--env',choices=('esp32_master','esp32_slave','esp32dev'),default='esp32_master');args=parser.parse_args()
+build=root/'.pio/build'/args.env;raw=(build/'partitions.bin').read_bytes()
 entries=[]
 for offset in range(0,len(raw),32):
     magic,kind,sub,address,size,label,flags=struct.unpack('<HBBII16sI',raw[offset:offset+32])
@@ -25,11 +27,11 @@ sections={parts[0]:int(parts[1]) for line in output.splitlines() if len(parts:=l
 # Match PlatformIO espressif32 builder's SIZEPROGREGEXP/SIZEDATAREGEXP.
 program=sum(sections.get(name,0) for name in ('.iram0.text','.iram0.vectors','.dram0.data','.flash.text','.flash.rodata'))
 static_ram=sum(sections.get(name,0) for name in ('.dram0.data','.dram0.bss','.noinit'))
-report={'flash_capacity':0x400000,'partitions':entries,'application_capacity':app['size'],
+report={'environment':args.env,'flash_capacity':0x400000,'partitions':entries,'application_capacity':app['size'],
         'program_bytes':program,'image_bytes':len(image),'image_headroom':app['size']-len(image),
         'program_headroom':app['size']-program,'static_ram_bytes':static_ram,
         'second_ota_slot':any(e['name']=='app1' for e in entries),
         'filesystem_bytes':next(e['size'] for e in entries if e['name']=='spiffs'),
         'physical_upload_performed':False,'passed':True}
-(root/'docs/ACCESS_BUILD_EVIDENCE.json').write_text(json.dumps(report,indent=2))
+(root/'docs'/(args.env+'_BUILD_EVIDENCE.json')).write_text(json.dumps(report,indent=2))
 print(json.dumps(report,indent=2))

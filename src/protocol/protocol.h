@@ -36,6 +36,7 @@ struct Message {
     String origin;
     String correlationId;
     uint32_t sequence = 0;
+    uint8_t radioHopCount = 0, radioMaxHops = 0; // RV1 metadata; legacy JSON schema stays unchanged.
 
     String typeString() const;
     String toJson() const;

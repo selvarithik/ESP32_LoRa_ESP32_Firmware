@@ -3,13 +3,19 @@
 #include <WebServer.h>
 #include "session_core.h"
 
+class LocalHttpServer:public WebServer {
+public:
+    using WebServer::WebServer;
+    WiFiClient& bodyClient(){return _currentClient;}
+};
+
 class LocalWebServer {
 public:
     void begin();
     void loop();
 
 private:
-    WebServer _server{80};
+    LocalHttpServer _server{80};
 
     void registerRoutes();
 
@@ -31,10 +37,13 @@ private:
     void handleLocalExchange();
     void readLocalBody();
     String localBody;
+    bool localBodyRejected=false;
     BrowserSessions sessions;
     BrowserSessions::Entry* browserSession(bool create=false);
     void handleSession();
     void handleLogin();
+    void handleLoginStart();
+    void handleLoginResult();
     void handleAccount();
     void handleLogout();
     void sendAccessPage(bool account);

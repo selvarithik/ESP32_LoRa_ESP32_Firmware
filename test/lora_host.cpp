@@ -1,3 +1,5 @@
+// Historical harness for the retired newline UART driver; not a current test target.
+// Current native checks: check_e220.py; current full driver builds: PlatformIO.
 #include "../src/communication/lora_transport.h"
 #include "../src/core/logger.h"
 #include <assert.h>

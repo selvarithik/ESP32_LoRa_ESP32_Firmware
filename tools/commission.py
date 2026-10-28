@@ -11,14 +11,14 @@ import serial
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--port', required=True)
-    parser.add_argument('--operation', choices=['password', 'wifi', 'mqtt','recover-account'], required=True)
-    parser.add_argument('--confirm-device-id',help='Exact physical device ID required for deliberate account recovery')
+    parser.add_argument('--operation', choices=['password', 'wifi', 'mqtt','recover-account','apply-build-role'], required=True)
+    parser.add_argument('--confirm-device-id',help='Exact physical device ID required for account recovery or build-role commissioning')
     parser.add_argument('--profile', type=Path)
     parser.add_argument('--revision', type=int, default=0)
     args = parser.parse_args()
-    if args.operation == 'recover-account':
-        if not args.confirm_device_id:parser.error('Recovery requires --confirm-device-id; only local account credentials will be replaced')
-        request={'op':'recover_account','confirm_device_id':args.confirm_device_id}
+    if args.operation in ('recover-account','apply-build-role'):
+        if not args.confirm_device_id:parser.error('This physical operation requires --confirm-device-id')
+        request={'op':'recover_account' if args.operation=='recover-account' else 'apply_build_role','confirm_device_id':args.confirm_device_id}
     elif args.operation == 'password':
         password = getpass.getpass('New administrator password (12..64 characters): ')
         if password != getpass.getpass('Confirm new password: '):
