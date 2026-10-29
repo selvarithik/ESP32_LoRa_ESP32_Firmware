@@ -5,20 +5,25 @@
 #include "dht_provider.h"
 #include <Wire.h>
 #include <cmath>
+#include <atomic>
 
 SensorManager sensorManager;
 namespace {
 struct Reading {float t=0,h=0,bus=0,shunt=0;uint32_t sampled=0,lastGood=0,adc=0,mv=0;uint16_t dhtPulses=0;DhtPulseCore::Result dhtResult=DhtPulseCore::Result::Driver;bool dht=false,ina=false,mq=false,dhtIdleHigh=false,dhtPolling=false;};
 Reading latest;
+std::atomic<bool> busReady{false},scanRequested{false},scanBusy{false};
+portMUX_TYPE scanMux=portMUX_INITIALIZER_UNLOCKED;uint8_t scanAddresses[32]{};unsigned scanCount=0;bool scanDone=false,scanTruncated=false;
 QueueHandle_t readings=nullptr;
 bool dhtEnabled=false,inaEnabled=false,mqEnabled=false;int dhtPin=4,address=64;uint32_t warmup=86400;
 bool reg(uint8_t r,uint16_t& v){Wire.beginTransmission(address);Wire.write(r);if(Wire.endTransmission(false))return false;if(Wire.requestFrom(address,2)!=2)return false;v=(Wire.read()<<8)|Wire.read();return true;}
 void sample(void*) {
     DhtProvider provider(dhtPin);if(dhtEnabled)provider.begin();
-    if(inaEnabled){Wire.begin(HardwareProfile::InaSda,HardwareProfile::InaScl,100000);Wire.setTimeOut(50);Wire.beginTransmission(address);Wire.write(0);Wire.write(0x39);Wire.write(0x9f);Wire.endTransmission();}
+    if(inaEnabled){Wire.begin(HardwareProfile::InaSda,HardwareProfile::InaScl,100000);Wire.setTimeOut(50);Wire.beginTransmission(address);Wire.write(0);Wire.write(0x39);Wire.write(0x9f);Wire.endTransmission();busReady=true;}
     if(mqEnabled){pinMode(HardwareProfile::Mq135,INPUT);analogReadResolution(12);analogSetPinAttenuation(HardwareProfile::Mq135,ADC_11db);}
     uint32_t lastGood=0;
-    for(;;){vTaskDelay(pdMS_TO_TICKS(2000));Reading r;r.sampled=millis();
+    for(;;){vTaskDelay(pdMS_TO_TICKS(2000));
+        if(scanRequested.exchange(false)){uint8_t found[32]{};unsigned count=0;bool truncated=false;Wire.setTimeOut(5);for(unsigned a=8;a<=119;++a){Wire.beginTransmission((uint8_t)a);if(Wire.endTransmission()==0){if(count<32)found[count++]=a;else truncated=true;}vTaskDelay(1);}Wire.setTimeOut(50);portENTER_CRITICAL(&scanMux);memcpy(scanAddresses,found,sizeof(found));scanCount=count;scanTruncated=truncated;scanDone=true;portEXIT_CRITICAL(&scanMux);scanBusy=false;}
+        Reading r;r.sampled=millis();
         if(dhtEnabled){auto v=provider.read();r.t=v.temperature;r.h=v.humidity;r.dht=v.valid;r.dhtPulses=provider.pulses;r.dhtResult=provider.result;r.dhtIdleHigh=provider.idleHigh;r.dhtPolling=provider.usedPolling;if(r.dht)lastGood=r.sampled;}r.lastGood=lastGood;
         if(inaEnabled){uint16_t b,s;if(reg(2,b)&&reg(1,s)&&(b&2)&&!(b&1)){r.bus=(b>>3)*0.004f;r.shunt=(int16_t)s*0.01f;r.ina=r.bus<=26.0f&&fabs(r.shunt)<320.0f;}}
         if(mqEnabled){r.adc=analogRead(HardwareProfile::Mq135);r.mv=analogReadMilliVolts(HardwareProfile::Mq135);r.mq=true;}
@@ -44,3 +49,6 @@ String SensorManager::telemetryJson(unsigned index)const{
     String raw;serializeJson(d,raw);return raw;
 }
 String SensorManager::healthJson()const{JsonDocument d;auto a=d.to<JsonArray>();for(unsigned i=0;i<3;++i){JsonDocument s;deserializeJson(s,telemetryJson(i));s.remove("parameters");s.remove("units");a.add(s);}String raw;serializeJson(d,raw);return raw;}
+
+bool SensorManager::requestI2cScan(){if(!busReady.load()||scanBusy.exchange(true))return false;portENTER_CRITICAL(&scanMux);scanDone=false;scanCount=0;scanTruncated=false;portEXIT_CRITICAL(&scanMux);scanRequested=true;return true;}
+String SensorManager::i2cScanJson()const{uint8_t addresses[32];unsigned count;bool done,truncated;portENTER_CRITICAL(&scanMux);memcpy(addresses,scanAddresses,sizeof(addresses));count=scanCount;done=scanDone;truncated=scanTruncated;portEXIT_CRITICAL(&scanMux);JsonDocument d;d["state"]=!busReady?"BUS_UNAVAILABLE":scanBusy?"SCANNING":done?"COMPLETED":"IDLE";d["sda"]=HardwareProfile::InaSda;d["scl"]=HardwareProfile::InaScl;d["truncated"]=truncated;auto a=d["addresses"].to<JsonArray>();for(unsigned i=0;i<count;++i)a.add(addresses[i]);String raw;serializeJson(d,raw);return raw;}

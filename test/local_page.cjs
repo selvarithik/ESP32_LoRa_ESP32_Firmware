@@ -12,13 +12,17 @@ Object.assign(config,{wifi_dns2:'',sleep_enabled:false,sleep_start_minute:0,slee
  try{
   for(const width of [1280,375]){
    const ctx=await browser.newContext({viewport:{width,height:900}}),page=await ctx.newPage();let invalid=false,unchanged=false,lastSave=null,lastReset=null;
+   let sensorSnapshot={valid:true,status:'OK',parameters:{temperature:29.4,humidity:54}};
+   let connection={wifi_connected:true,server_connected:true,mqtt_connected:true,unix_time:1793205000,clock_valid:true,radio:{enabled:false,state:'DISABLED',error:'DISABLED',hardware_link_verified:false,public_settings_read:false}};
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.route('http://esp32.test/**',async route=>{
     const req=route.request(),url=new URL(req.url());let status=200,body={};
-    if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:html});
+    if(['/','/network','/device','/radio','/nodes','/system'].includes(url.pathname))return route.fulfill({contentType:'text/html',body:html});
     if(url.pathname==='/api/auth/session')body={csrf:'fixture-csrf',authenticated:true};
     else if(url.pathname==='/api/config'&&req.method()==='GET')body=config;
-    else if(url.pathname==='/api/status')body={device:{id:config.device_id,role:'MASTER'},sensor:{status:'NOT_CONFIGURED'},ethernet_status:'NOT_AVAILABLE',network:{command_state:'COMPLETED'}};
+    else if(url.pathname==='/api/connectivity')body=connection;
+    else if(url.pathname==='/api/radio/inspect')body={requested:true,rf_transmission:false,register_writes:false};
+    else if(url.pathname==='/api/status')body={device:{id:config.device_id,role:'MASTER'},sensor:sensorSnapshot,ethernet_status:'NOT_AVAILABLE',network:{command_state:'COMPLETED'}};
     else if(url.pathname==='/api/config'){lastSave=req.postDataJSON();assert.equal(req.headers()['x-config-request'],'1');if(invalid){status=400;body={error:'Intervals out of range'};}else body={saved:true,restart_required:!unchanged};}
     else if(url.pathname==='/api/commands')body={command_id:'MSG-TEST',state:'QUEUED'};
     else if(url.pathname==='/api/system/factory-reset'){lastReset=req.postDataJSON();body={accepted:true};}
@@ -28,9 +32,19 @@ Object.assign(config,{wifi_dns2:'',sleep_enabled:false,sleep_start_minute:0,slee
    });
    await page.goto('http://esp32.test/');
    await page.waitForFunction(()=>document.getElementById('feedback').textContent.startsWith('Ready.'));
+   assert.equal(await page.locator('.esp-topbar').count(),0,'global header removed');
+   const boxes=await page.evaluate(()=>{const n=document.querySelector('.esp-sidebar').getBoundingClientRect(),h=document.querySelector('h1').getBoundingClientRect();return {navBottom:n.bottom,navRight:n.right,headingTop:h.top,headingLeft:h.left,overflow:document.documentElement.scrollWidth>innerWidth};});assert.ok(width>700?boxes.headingLeft>=boxes.navRight:boxes.headingTop>=boxes.navBottom,'sidebar must not overlap page');assert.equal(boxes.overflow,false);
+   assert.equal(await page.locator('.esp-menu a[aria-current=page]').innerText(),'Dashboard');
+   assert.equal(await page.locator('#sensorSummary').count(),0);assert.ok(!(await page.locator('#overview').innerText()).includes('temperature'),'sensor readings excluded from detail view');
+   await page.waitForFunction(()=>document.getElementById('link-server').dataset.state==='connected');assert.equal(await page.locator('#link-lora').getAttribute('data-state'),'off');
    assert.equal(await page.locator('#field_admin_password').inputValue(),'');
    assert.equal(await page.locator('#field_gateway_ca').evaluate(e=>e.tagName),'TEXTAREA');
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+   if(process.env.CAPTURE_SCREENSHOTS==='1')await page.screenshot({path:path.join(root,'docs',`local-dashboard-mock-${width}.png`)});
+   connection={...connection,server_connected:false,mqtt_connected:false,radio:{enabled:true,state:'READY_LINK_UNVERIFIED',error:'NONE',hardware_link_verified:false,public_settings_read:true}};
+   await page.locator('#checkConnection').click();await page.waitForFunction(()=>document.getElementById('link-lora').dataset.state==='pending');assert.equal(await page.locator('#link-server').getAttribute('data-state'),'pending');
+   await page.locator('#inspectRadio').click();await page.waitForFunction(()=>document.getElementById('connectionResult').textContent.includes('No RF'));assert.equal(lastSave,null);
+   await page.goto('http://esp32.test/device');await page.waitForFunction(()=>document.getElementById('feedback').textContent.startsWith('Ready.'));
    await page.locator('#field_telemetry_seconds').fill('15');
    page.once('dialog',d=>d.accept());invalid=true;await page.getByRole('button',{name:'Save and apply',exact:true}).click();
    await page.waitForFunction(()=>document.getElementById('feedback').textContent==='Intervals out of range');
@@ -39,12 +53,15 @@ Object.assign(config,{wifi_dns2:'',sleep_enabled:false,sleep_start_minute:0,slee
    await page.waitForFunction(()=>document.getElementById('feedback').textContent.includes('no restart required'));
    await page.locator('#destination').fill('ESP32-NODE');await page.getByRole('button',{name:'Send command',exact:true}).click();
    await page.waitForFunction(()=>document.getElementById('result').textContent.includes('QUEUED'));
+   await page.goto('http://esp32.test/system');await page.waitForFunction(()=>document.getElementById('feedback').textContent.startsWith('Ready.'));
    await page.getByRole('button',{name:'Factory reset',exact:true}).click();assert.equal(lastReset,null);
    await page.locator('#resetId').fill(config.device_id);page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Factory reset',exact:true}).click();
    await page.waitForFunction(()=>document.getElementById('feedback').textContent.startsWith('Reset accepted'));
    assert.deepEqual(lastReset,{confirm_device_id:config.device_id});assert.deepEqual(errors,[]);
-   if(process.env.CAPTURE_SCREENSHOTS==='1')await page.screenshot({path:path.join(root,'docs',`local-page-mock-${width}.png`),fullPage:true});
+   if(process.env.CAPTURE_SCREENSHOTS==='1')await page.screenshot({path:path.join(root,'docs',`local-page-mock-${width}.png`),fullPage:false});
    console.log(`PASS local page ${width}px: fields, types, secrets, validation, save, commands, reset, overflow`);
+   for(const route of ['network','device','radio','nodes','system']){await page.goto('http://esp32.test/'+route);await page.waitForFunction(()=>document.getElementById('feedback').textContent.startsWith('Ready.'));assert.equal(await page.locator('.esp-menu a[aria-current=page]').getAttribute('href'),'/'+route);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no overflow on '+route);}
+   assert.deepEqual(errors,[]);console.log(`PASS sidebar navigation ${width}px: Network, Device, Radio, Nodes and System`);
    await ctx.close();
   }
  }finally{await browser.close();}

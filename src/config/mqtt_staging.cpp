@@ -1,4 +1,5 @@
 #include "mqtt_staging.h"
+#include "transport_trial.h"
 #include "mqtt_contract.h"
 #include "strict_json.h"
 #include "mqtt_digest.h"
@@ -99,6 +100,7 @@ String MqttStaging::status(bool includeProfiles) const {
     serializeJson(out,result);return result;
 }
 int MqttStaging::action(const String& op,const String& raw,String& response){
+    if(TransportSwitch::busy())return error(409,"TRANSPORT_TRANSACTION_BUSY","Finish or recover the transport transaction first",response);
     JsonDocument req;
     if(!StrictJson::valid(raw,MqttContract::maxRequestBytes)||deserializeJson(req,raw)||!req.is<JsonObject>())return error(400,"INVALID_REQUEST","JSON object required",response);
     for(JsonPair entry:req.as<JsonObject>()){
@@ -175,7 +177,7 @@ int MqttStaging::provision(const String& raw,String& response,bool restoreInvali
     if(!save(next))return error(503,"STORAGE_FAILED","No change applied",response);swap(state,next);response=status();return 200;
 }
 
-void MqttStaging::control(const String& raw){if(!controls||raw.length()>1024)return;Control* c=new(std::nothrow) Control{};if(!c)return;strlcpy(c->raw,raw.c_str(),sizeof(c->raw));if(xQueueSend(controls,&c,0)!=pdTRUE)delete c;}
+void MqttStaging::control(const String& raw){if(TransportSwitch::busy())return;if(!controls||raw.length()>1024)return;Control* c=new(std::nothrow) Control{};if(!c)return;strlcpy(c->raw,raw.c_str(),sizeof(c->raw));if(xQueueSend(controls,&c,0)!=pdTRUE)delete c;}
 void MqttStaging::loop(){
     if(restartAt&&(int32_t)(millis()-restartAt)>=0)ESP.restart();
     String raw;Control* c=nullptr;if(controls&&xQueueReceive(controls,&c,0)==pdTRUE){raw=c->raw;delete c;}else MqttCandidate::receive(raw);

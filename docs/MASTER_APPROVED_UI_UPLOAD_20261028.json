@@ -1,0 +1,20 @@
+{
+  "port": "COM8",
+  "device_id": "ESP32-10777D842178",
+  "partition_layout": "huge_app.csv",
+  "application_sha256": "1d052b6380ade8b5b40b8fd7fa4a35d2ea806fd87dfa24eb2d68a189b36b73fa",
+  "application_bytes": 1340960,
+  "full_backup_verified_before_write": true,
+  "device_matches_backup_before_write": true,
+  "application_readback_verified": true,
+  "partition_readback_verified": true,
+  "nvs_ota_metadata_bytes_unchanged": true,
+  "bootloader_region_unchanged": true,
+  "all_flash_after_application_unchanged": true,
+  "old_filesystem_raw_region_unchanged": true,
+  "filesystem_image_written": false,
+  "filesystem_format_performed": false,
+  "old_filesystem_not_mounted_by_current_firmware": true,
+  "physical_upload_performed": true,
+  "reset_requested": true
+}

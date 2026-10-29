@@ -2,6 +2,9 @@
 #include <stdint.h>
 #include <string.h>
 namespace DeliveryCore {
+// Do not discard commands, ACKs, results or forwarded Slave packets to reboot.
+inline bool discardForPower(bool draining,bool ownSource,bool command,bool telemetry,bool heartbeat,bool hello,bool status){return draining&&ownSource&&!command&&(telemetry||heartbeat||hello||status);}
+inline bool pollGateway(bool localMode,bool canonicalProfile){return localMode||!canonicalProfile;}
 inline uint32_t retryAt(bool command,int code,uint32_t now,uint32_t scheduled){return !command&&code==503?now+1000:scheduled;}
 // An authenticated parent may have rebooted and lost its runtime child table.
 // Re-register on packet rejection, without weakening nonce/signature checks.

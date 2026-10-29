@@ -4,6 +4,8 @@
 class TransportManager {
 public:
     void begin();
+    void requestLocalMode(bool value);bool localMode() const;
+    void pause(bool value);bool paused()const;uint32_t receiptCounter()const;
     void loop();
     bool sendLoRa(const Message& message);
     bool send(const Message& message, const String& host = "", bool gateway = false);

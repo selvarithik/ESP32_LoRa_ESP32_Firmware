@@ -1,0 +1,13 @@
+{
+  "port": "COM8",
+  "device_id": "ESP32-10777D842178",
+  "application_only": true,
+  "image_sha256": "88794557a68367d5122024055d8f8aac1081c9c4e7dc7af0c94b4e317e85189e",
+  "image_bytes": 1352160,
+  "application_readback_verified": true,
+  "partition_nvs_ota_bytes_unchanged": true,
+  "protected_region_backup_roundtrip_verified": true,
+  "existing_full_backup_verified": true,
+  "partition_table_written": false,
+  "filesystem_written": false
+}

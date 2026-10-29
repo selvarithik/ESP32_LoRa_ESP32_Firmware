@@ -57,6 +57,11 @@ void dispatch(){
         JsonDocument out;out["ok"]=true;out["device_id"]=configManager.get().device_id;out["username"]=accountName;out["password_change_required"]=required();out["station_ip"]=WiFi.localIP().toString();out["ap_ip"]=WiFi.softAPIP().toString();out["free_heap"]=ESP.getFreeHeap();out["loop_stack_free_min_bytes"]=uxTaskGetStackHighWaterMark(nullptr);out["network_stack_free_min_bytes"]=transportManager.minimumStackFreeBytes();out["free_8bit_heap"]=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_8bit_block"]=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_free_block"]=ESP.getMaxAllocHeap();out["minimum_free_heap"]=ESP.getMinFreeHeap();out["uptime_ms"]=millis();out["unix_time"]=time(nullptr);
         JsonDocument mqtt;deserializeJson(mqtt,mqttStaging.status(false));out["mqtt"]=mqtt;
         JsonDocument local;deserializeJson(local,transportManager.localStatus());out["local_ip"]=local;out["role"]=configManager.roleString();JsonDocument radio;deserializeJson(radio,loraTransport.statusJson());out["radio"]=radio;out["dht_enabled"]=configManager.get().dht_enabled;out["dht_pin"]=configManager.get().dht_pin;out["ina219_enabled"]=configManager.get().ina219_enabled;out["mq135_enabled"]=configManager.get().mq135_enabled;JsonDocument sensors;sensors.to<JsonArray>();for(unsigned i=0;i<3;++i){JsonDocument reading;deserializeJson(reading,sensorManager.telemetryJson(i));sensors.as<JsonArray>().add(reading);}out["sensors"]=sensors;JsonDocument indicators;deserializeJson(indicators,connectionIndicators.statusJson());out["indicators"]=indicators;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
+    }else if(op=="set_role"){
+        String role=d["role"]|"";
+        if(d.size()!=3||(role!="MASTER"&&role!="NODE")||!d["confirm_device_id"].is<const char*>()||!CommissioningRoleCore::confirmed(true,configManager.get().device_id.c_str(),d["confirm_device_id"].as<const char*>())){reply(false,"ROLE_OR_IDENTITY_INVALID");return;}
+        JsonDocument change;change["role"]=role;if(CommissioningRoleCore::clearSelfAssignment(role=="MASTER",configManager.get().device_id.c_str(),configManager.get().master_id.c_str()))change["master_id"]="";
+        String raw,error;serializeJson(change,raw);reply(configManager.update(raw,error),"ROLE_RESULT_RESTART_REQUIRED");
     }else if(op=="apply_build_role"){
         if(d.size()!=2||!d["confirm_device_id"].is<const char*>()||!CommissioningRoleCore::confirmed(HardwareProfile::ExplicitRole,configManager.get().device_id.c_str(),d["confirm_device_id"].as<const char*>())){reply(false,"IDENTITY_OR_EXPLICIT_BUILD_REQUIRED");return;}
         JsonDocument change;change["role"]=HardwareProfile::Master?"MASTER":"NODE";
@@ -65,7 +70,7 @@ void dispatch(){
     }else if(op=="network_config"){
         // Physical USB only. First-use web/account protections stay unchanged.
         auto change=d["config"].as<JsonObjectConst>();
-        bool valid=d.size()==3&&d["confirm_device_id"].is<const char*>()&&CommissioningRoleCore::confirmed(HardwareProfile::ExplicitRole,configManager.get().device_id.c_str(),d["confirm_device_id"].as<const char*>())&&!change.isNull()&&NetworkCommissionCore::count(change.size());
+        bool valid=d.size()==3&&d["confirm_device_id"].is<const char*>()&&CommissioningRoleCore::confirmed(true,configManager.get().device_id.c_str(),d["confirm_device_id"].as<const char*>())&&!change.isNull()&&NetworkCommissionCore::count(change.size());
         for(JsonPairConst item:change)if(!NetworkCommissionCore::allowed(item.key().c_str()))valid=false;
         if(!valid){reply(false,"NETWORK_FIELDS_OR_IDENTITY_INVALID");return;}
         String raw,error;serializeJson(change,raw);reply(configManager.update(raw,error),"NETWORK_RESULT_RESTART_REQUIRED");

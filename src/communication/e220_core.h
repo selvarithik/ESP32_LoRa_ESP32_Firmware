@@ -12,8 +12,18 @@ inline void put32(uint8_t* p,uint32_t v){for(unsigned i=0;i<4;++i)p[i]=v>>(i*8);
 inline uint32_t get32(const uint8_t* p){uint32_t v=0;for(unsigned i=0;i<4;++i)v|=uint32_t(p[i])<<(i*8);return v;}
 inline size_t cobsEncode(const uint8_t* in,size_t n,uint8_t* out,size_t cap){if(!out||cap<n+n/254+2)return 0;size_t codeAt=0,write=1;uint8_t code=1;for(size_t i=0;i<n;++i){if(!in[i]){out[codeAt]=code;code=1;codeAt=write++;}else{out[write++]=in[i];if(++code==255){out[codeAt]=code;code=1;codeAt=write++;}}}out[codeAt]=code;out[write++]=0;return write;}
 inline size_t cobsDecode(const uint8_t* in,size_t n,uint8_t* out,size_t cap){size_t r=0,w=0;while(r<n){uint8_t code=in[r++];if(!code||r+code-1>n)return 0;for(unsigned i=1;i<code;++i){if(w>=cap||!in[r])return 0;out[w++]=in[r++];}if(code!=255&&r<n){if(w>=cap)return 0;out[w++]=0;}}return w;}
-struct Settings {uint16_t address=0;uint32_t baud=0;uint8_t airRate=0,channel=0,power=0;uint16_t packet=0;bool fixed=false,rssi=false,lbt=false;};
-inline bool settings(const uint8_t* bytes,size_t n,Settings& out){if(n!=9||bytes[0]!=0xc1||bytes[1]!=0||bytes[2]!=6)return false;const uint8_t* p=bytes+3;static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};static const uint16_t lengths[]={200,128,64,32};static const uint8_t power[]={22,17,13,10};if((((p[2]>>3)&3)==1||((p[2]>>3)&3)==2)||p[4]>80)return false;out.address=uint16_t(p[0])<<8|p[1];out.baud=baud[p[2]>>5];out.airRate=p[2]&7;out.packet=lengths[p[3]>>6];out.power=power[p[3]&3];out.channel=p[4];out.rssi=p[5]&128;out.fixed=p[5]&64;out.lbt=p[5]&16;return true;}
+struct Settings {uint16_t address=0;uint32_t baud=0;uint8_t airRate=0,channel=0,power=0;uint16_t packet=0;bool fixed=false,rssi=false,lbt=false;uint16_t worMs=2000;};
+inline bool settings(const uint8_t* bytes,size_t n,Settings& out){if(n!=9||bytes[0]!=0xc1||bytes[1]!=0||bytes[2]!=6)return false;const uint8_t* p=bytes+3;static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};static const uint16_t lengths[]={200,128,64,32};static const uint8_t power[]={22,17,13,10};if((((p[2]>>3)&3)==1||((p[2]>>3)&3)==2)||p[4]>80)return false;out.address=uint16_t(p[0])<<8|p[1];out.baud=baud[p[2]>>5];out.airRate=p[2]&7;out.packet=lengths[p[3]>>6];out.power=power[p[3]&3];out.channel=p[4];out.rssi=p[5]&128;out.fixed=p[5]&64;out.lbt=p[5]&16;out.worMs=((p[5]&7)+1)*500;return true;}
+inline bool encodeSettings(const Settings& s,const uint8_t* old,uint8_t* out){
+ static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};int b=-1;for(int i=0;i<8;++i)if(s.baud==baud[i])b=i;
+ int p=s.power==22?0:s.power==17?1:s.power==13?2:s.power==10?3:-1;
+ int packet=s.packet==200?0:s.packet==128?1:s.packet==64?2:s.packet==32?3:-1;
+ if(b<0||p<0||packet<0||s.channel>80||s.airRate>7||s.worMs<500||s.worMs>4000||s.worMs%500)return false;
+ memcpy(out,old,6);out[0]=s.address>>8;out[1]=s.address;out[2]=(b<<5)|s.airRate;
+ out[3]=(old[3]&0x3c)|(packet<<6)|p;out[4]=s.channel;
+ out[5]=(old[5]&0x28)|(s.rssi?128:0)|(s.fixed?64:0)|(s.lbt?16:0)|(s.worMs/500-1);return true;
+}
+inline unsigned mode(const char* value){return !strcmp(value,"WOR_TX")?1:!strcmp(value,"WOR_RX")?2:0;}
 inline uint8_t span(uint16_t packet){return packet>=64&&packet<=200?uint8_t(packet-2-Header-Tag):0;}
 struct Fragment {uint32_t transfer=0,crc=0;uint8_t sender[6]{},target[6]{},index=0,count=0,step=0,length=0;uint16_t total=0;const uint8_t* bytes=nullptr;};
 inline size_t fragment(const uint8_t* message,size_t total,uint32_t transfer,const uint8_t* sender,const uint8_t* target,uint8_t step,uint8_t index,uint8_t* out){if(!step||total==0||total>MaxMessage)return 0;size_t count=(total+step-1)/step;if(count>255||index>=count)return 0;size_t size=total-size_t(index)*step;if(size>step)size=step;out[0]=0xe2;out[1]=0x7a;out[2]=1;out[3]=0;put32(out+4,transfer);memcpy(out+8,sender,6);memcpy(out+14,target,6);out[20]=index;out[21]=count;put16(out+22,total);out[24]=size;out[25]=step;put32(out+26,PacketValidationCore::crc32((const char*)message,total));memcpy(out+Header,message+size_t(index)*step,size);return Header+size;}

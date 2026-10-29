@@ -1,0 +1,11 @@
+{
+  "port": "COM8",
+  "device_id": "ESP32-10777D842178",
+  "application_role": "master",
+  "application_offset": 65536,
+  "image_bytes": 1303664,
+  "image_sha256": "d1624e7c649f500c18b3827af862192abca42d0380b2e624ebcaac33250f5c3b",
+  "upload_hash_verified": true,
+  "partition_nvs_ota_bytes_unchanged_during_upload": true,
+  "protected_backup_roundtrip_verified": true
+}

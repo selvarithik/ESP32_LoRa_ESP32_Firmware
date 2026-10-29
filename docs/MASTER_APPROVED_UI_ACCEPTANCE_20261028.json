@@ -1,0 +1,118 @@
+{
+  "master": "ESP32-10777D842178",
+  "port": "COM8",
+  "station_ip": "192.168.1.105",
+  "mqtt": {
+    "state": "connected",
+    "tls_state": "VERIFIED",
+    "authentication_state": "ACCEPTED",
+    "subscription_state": "READY",
+    "reconnect_count": 0,
+    "pubacks": 154,
+    "outbox_bytes": 0,
+    "dropped": 0
+  },
+  "uptime_ms": 374324,
+  "new_mqtt_values": 210,
+  "mqtt_readings": {
+    "bus_voltage": {
+      "fresh_values": 32,
+      "last_timestamp": "2026-10-28T21:57:22.888041",
+      "latest_value": 3.228,
+      "age_seconds": 1.3,
+      "max_gap_seconds": 11.05
+    },
+    "current": {
+      "fresh_values": 32,
+      "last_timestamp": "2026-10-28T21:57:22.888041",
+      "latest_value": 0.0037,
+      "age_seconds": 1.3,
+      "max_gap_seconds": 11.05
+    },
+    "power": {
+      "fresh_values": 32,
+      "last_timestamp": "2026-10-28T21:57:22.888041",
+      "latest_value": 0.011944,
+      "age_seconds": 1.3,
+      "max_gap_seconds": 11.05
+    },
+    "shunt_voltage": {
+      "fresh_values": 32,
+      "last_timestamp": "2026-10-28T21:57:22.888041",
+      "latest_value": 0.37,
+      "age_seconds": 1.3,
+      "max_gap_seconds": 11.05
+    },
+    "mq135_adc_raw": {
+      "fresh_values": 32,
+      "last_timestamp": "2026-10-28T21:57:23.074312",
+      "latest_value": 418.0,
+      "age_seconds": 1.1,
+      "max_gap_seconds": 11.04
+    },
+    "mq135_pin_mv": {
+      "fresh_values": 32,
+      "last_timestamp": "2026-10-28T21:57:23.074312",
+      "latest_value": 490.0,
+      "age_seconds": 1.1,
+      "max_gap_seconds": 11.04
+    },
+    "humidity": {
+      "fresh_values": 9,
+      "last_timestamp": "2026-10-28T21:57:22.651758",
+      "latest_value": 48.0,
+      "age_seconds": 1.5,
+      "max_gap_seconds": 11.05
+    },
+    "temperature": {
+      "fresh_values": 9,
+      "last_timestamp": "2026-10-28T21:57:22.651758",
+      "latest_value": 32.3,
+      "age_seconds": 1.5,
+      "max_gap_seconds": 11.05
+    }
+  },
+  "preservation": {
+    "device_id": true,
+    "role": true,
+    "dht_enabled": true,
+    "dht_pin": true,
+    "ina219_enabled": true,
+    "mq135_enabled": true,
+    "mqtt_active_fingerprint": true,
+    "mqtt_revision": true,
+    "gateway_mqtt_document": true,
+    "gateway_protected_stores": true
+  },
+  "clock_seeded_over_usb": true,
+  "clock_seed_did_not_write_config": true,
+  "dht11": {
+    "sensor_type": "DHT11",
+    "sensor_id": "ESP32-10777D842178-DHT11",
+    "valid": true,
+    "simulated": false,
+    "status": "OK",
+    "sampled_uptime_ms": 372680,
+    "sampling_interval_seconds": 2,
+    "parameters": {
+      "temperature": 32.3,
+      "humidity": 48
+    },
+    "units": {
+      "temperature": "C",
+      "humidity": "%RH"
+    },
+    "capture_method": "PULSE_POLLING",
+    "last_success_uptime_ms": 372680,
+    "capture_status": "OK",
+    "capture_pulses": 0,
+    "data_idle_high": true
+  },
+  "web": {
+    "authenticated_page_verified_in_edge": true,
+    "nasa_vector_header_verified": true,
+    "header_background": "rgb(255, 0, 0)",
+    "all_navigation_text": "rgb(255, 0, 0)",
+    "screenshot": "docs/MASTER_APPROVED_UI_LIVE_20261028.png"
+  }
+}

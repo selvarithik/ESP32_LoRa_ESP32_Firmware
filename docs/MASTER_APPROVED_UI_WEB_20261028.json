@@ -1,0 +1,20 @@
+{
+  "/login": {
+    "http_status": 200,
+    "nasa_wordmark": true,
+    "red_header": true
+  },
+  "/": {
+    "http_status": 200,
+    "nasa_wordmark": true,
+    "red_header": true
+  },
+  "/mqtt": {
+    "http_status": 200,
+    "nasa_wordmark": true,
+    "red_header": true
+  },
+  "/api/status": {
+    "http_status": 401
+  }
+}

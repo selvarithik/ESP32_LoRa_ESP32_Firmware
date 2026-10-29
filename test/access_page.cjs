@@ -9,6 +9,7 @@ const html=fs.readFileSync(path.join(__dirname,'../src/web/access_page.h'),'utf8
  await context.route('http://esp32.test/**',async route=>{const request=route.request(),url=new URL(request.url());
   if(['/login','/account'].includes(url.pathname))return route.fulfill({contentType:'text/html',body:html});
   if(url.pathname==='/')return route.fulfill({contentType:'text/html',body:'<h1>Authenticated dashboard</h1>'});
+  if(url.pathname==='/api/connectivity')return route.fulfill({contentType:'application/json',body:JSON.stringify({wifi_connected:true,server_connected:false,mqtt_connected:false,clock_valid:false,radio:{enabled:false,state:'DISABLED',error:'DISABLED'}})});
   let status=200,data={};
   if(url.pathname==='/api/auth/session')data={authenticated,csrf:'test-csrf',username:'admin',password_change_required:mustChange};
   else {assert.equal(request.headers()['x-csrf-token'],'test-csrf');const body=request.method()==='POST'?request.postDataJSON():pendingCredentials;
@@ -20,7 +21,11 @@ const html=fs.readFileSync(path.join(__dirname,'../src/web/access_page.h'),'utf8
    else throw Error('Unexpected endpoint '+url.pathname);
   }await route.fulfill({status,contentType:'application/json',body:JSON.stringify(data)});
  });
- await page.goto('http://esp32.test/login');await page.locator('#username').fill('admin');await page.locator('#password').fill('wrong');
+ await page.goto('http://esp32.test/login');
+ if(process.env.CAPTURE_SCREENSHOTS==='1')await page.screenshot({path:path.join(__dirname,'../docs',`access-page-mock-${width}.png`)});
+ assert.equal(await page.locator('.esp-topbar').count(),0,'login has no global header');
+ const loginBounds=await page.evaluate(()=>({form:document.querySelector('main').getBoundingClientRect().top,overflow:document.documentElement.scrollWidth>innerWidth}));assert.ok(loginBounds.form>=0,'login remains reachable');assert.equal(loginBounds.overflow,false);
+ await page.locator('#username').fill('admin');await page.locator('#password').fill('wrong');
  await page.locator('#visibility').click();assert.equal(await page.locator('#password').getAttribute('type'),'text');
  await page.locator('#submit').click();await page.waitForFunction(()=>document.getElementById('feedback').textContent.includes('Incorrect'));
  await page.locator('#password').fill('admin');await page.locator('#submit').click();await page.waitForURL('**/account');

@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-29",
+  "scope": "ESP32 embedded web UI only",
+  "uploaded": false,
+  "build_environment": "esp32dev",
+  "application_bytes": 1344105,
+  "application_capacity": 3145728,
+  "ram_bytes": 75556,
+  "ram_capacity": 327680,
+  "binary_bytes": 1350816,
+  "binary_sha256": "13ab4566f516f85e89c522a1f7905783a82d4d33c479c9300c323a984d226bc4",
+  "ui_tests": {
+    "local_widths": [
+      1280,
+      375
+    ],
+    "mqtt_widths": [
+      360,
+      1280
+    ],
+    "access_widths": [
+      360,
+      1280
+    ],
+    "sidebar_routes": [
+      "network",
+      "device",
+      "radio",
+      "nodes",
+      "system"
+    ],
+    "data_source": "mocked existing HTTP handlers; not physical hardware"
+  },
+  "partition_configuration_changed": false,
+  "gateway_changed": false,
+  "configuration_defaults_changed": false,
+  "hardware_verification": "PENDING: board unavailable",
+  "sensor_readings_in_local_ui": false
+}

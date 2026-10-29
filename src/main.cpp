@@ -18,12 +18,13 @@
 #include "core/connection_indicators.h"
 #include "communication/lora_transport.h"
 #include "config/hardware_profile.h"
+#include "config/transport_trial.h"
 namespace {bool roleReady=false,identityReady=false;}
 
 void setup() {
     logger.begin(115200);
     if(!configManager.begin())logger.error("CONFIG","NVS unavailable; restart required before commissioning");
-    mqttStaging.begin();Commissioning::begin();
+    mqttStaging.begin();TransportSwitch::begin();Commissioning::begin();
     identityReady=deviceIdentity.begin();systemManager.begin();watchdogManager.begin(10);
     logger.info("IDENTITY","Device ID: "+deviceIdentity.deviceId()+" Role: "+configManager.roleString());
     connectionIndicators.begin();
@@ -36,7 +37,7 @@ void setup() {
     logger.info("SYSTEM","Device services ready; inspect radio status for enablement/settings (Ethernet unavailable)");
 }
 void loop() {
-    watchdogManager.feed();Commissioning::loop();mqttStaging.loop();wifiManager.loop();transportManager.loop();
+    watchdogManager.feed();TransportSwitch::loop();Commissioning::loop();mqttStaging.loop();wifiManager.loop();transportManager.loop();
     if(roleReady){if(configManager.get().role==DeviceRole::MASTER)masterRole.loop();else nodeRole.loop();}
     connectionIndicators.loop();localWebServer.loop();delay(2);
 }

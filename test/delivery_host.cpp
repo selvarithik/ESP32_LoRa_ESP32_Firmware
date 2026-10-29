@@ -43,5 +43,11 @@ int main(){
  assert(!transportReceiptCompletes(false,false,true)); // Radio telemetry still needs the application ACK.
  assert(!applicationReceiptRequired(true,false));
  assert(applicationReceiptRequired(true,true)&&applicationReceiptRequired(false,false));
+ assert(!pollGateway(false,true));assert(pollGateway(true,true)&&pollGateway(false,false));
+ assert(discardForPower(true,true,false,true,false,false,false));
+ assert(!discardForPower(true,false,false,true,false,false,false));
+ assert(!discardForPower(true,true,true,false,false,false,false));
+ assert(!discardForPower(true,true,false,false,false,false,false));
+ assert(!discardForPower(false,true,false,true,false,false,false));
  puts("PASS production in-flight retry gate, ACK wait, timer wrap, latest sensor coalescing and relayed-message preservation");
 }

@@ -21,6 +21,7 @@ inline uint32_t sleepRemaining(const Schedule& s,int64_t utc){
  for(int yesterday=0;yesterday<=1;++yesterday){int64_t anchor=day-yesterday;unsigned weekday=(anchor+4)%7;int64_t start=anchor*86400+s.start*60;if((s.days&(1<<weekday))&&local>=start&&local<start+s.duration)return (uint32_t)(start+s.duration-local);}
  return 0;
 }
+inline uint32_t manualSleepRemaining(uint32_t now,uint32_t started,uint32_t seconds){uint32_t elapsed=(now-started)/1000;return elapsed>=seconds+5?0:seconds+5-elapsed;}
 enum class PowerDecision {ACTIVE,CLOCK_REQUIRED,DRAINING,SLEEP,RESTART};
 inline PowerDecision powerDecision(bool restart,uint32_t sinceRequest,bool enabled,bool clock,uint32_t remaining,unsigned pending,bool idle,bool coordinatorIdle){
  if(!restart&&(!enabled||!remaining))return enabled&&!clock?PowerDecision::CLOCK_REQUIRED:PowerDecision::ACTIVE;

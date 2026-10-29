@@ -23,6 +23,7 @@ namespace {
 JsonDocument profile;
 esp_mqtt_client_handle_t client=nullptr;
 std::atomic<bool> requestedEnabled{!HardwareProfile::ExplicitRole},clientRunning{false};
+std::atomic<bool> profilePresent{false};
 std::atomic<bool> up{false};std::atomic<uint32_t> reconnects{0},dropped{0};std::atomic<int> failure{0};
 struct Received{String topic;String raw;};QueueHandle_t queue=nullptr;
 Received assembly{};size_t offset=0;bool assembling=false;
@@ -38,6 +39,7 @@ String device;std::atomic<uint32_t> sequence{0};uint32_t sharedRevision=0;
 std::atomic<bool> recycleRequested{false};
 std::atomic<int> lastTlsError{0};std::atomic<uint32_t> lastCertFlags{0},recycles{0},unconfirmedBytesReleased{0};
 MqttRecoveryCore::Policy recovery;
+MqttRecoveryCore::LinkWatch linkWatch;
 bool startClient();
 bool send(const String& type,JsonObjectConst data,const String& id="",const String& correlation=""){
  ++publishAttempts;if(!client||!up){publishError=1;return false;}if(esp_mqtt_client_get_outbox_size(client)>16384){publishError=2;return false;}String topic;if(!MqttContract::topic(profile.as<JsonObjectConst>(),type,topic))return false;
@@ -91,13 +93,13 @@ void receive(const Received& r){
  for(auto& old:receipts)if(old.id==mid){if(old.hash!=hash){++dropped;return;}if(old.reply.length()){JsonDocument reply;deserializeJson(reply,old.reply);send("chat/ack",reply.as<JsonObjectConst>(),"",mid);return;}if(type!="command")return;}
  auto data=d["data"].as<JsonObjectConst>();bool accepted=false;
  if(type=="command"&&data.size()==1&&data["packet"].is<JsonObjectConst>()){
-   String packet;serializeJson(data["packet"],packet);Message m;if(Message::fromJson(packet,m)&&m.source=="GATEWAY"&&(m.destination==device||m.destination.length()>0)&&(m.type==PacketType::COMMAND||m.type==PacketType::CONFIG_GET||m.type==PacketType::CONFIG_UPDATE))accepted=transportManager.enqueue(packet,"GATEWAY",true);
+   String packet;serializeJson(data["packet"],packet);Message m;if(Message::fromJson(packet,m)&&m.source=="GATEWAY"&&(m.destination==device||m.destination.length()>0)&&(m.type==PacketType::COMMAND||m.type==PacketType::CONFIG_GET||m.type==PacketType::CONFIG_UPDATE))accepted=transportManager.enqueue(packet,"MQTT",true);
  }else if(type=="config"){
    String op=data["op"]|"";
    if((op=="SWITCH_PREPARE"&&data.size()==6)||((op=="SWITCH_CONFIRM"||op=="SWITCH_ROLLBACK")&&data.size()==5)){String control;serializeJson(data,control);mqttStaging.control(control);accepted=true;}
    else if(op=="PERSISTED"&&data.size()==3&&id(data["received_message_id"])&&data["status"].as<String>()=="PERSISTED"){
      Message ack;ack.messageId=mid;ack.source="GATEWAY";ack.destination=device;ack.nextHop=device;ack.origin="GATEWAY";ack.type=PacketType::ACK;ack.ttl=1;ack.timestamp=time(nullptr);ack.correlationId=data["received_message_id"].as<String>();
-     JsonDocument payload;payload["received_message_id"]=data["received_message_id"];payload["status"]="RECEIVED";serializeJson(payload,ack.payload);accepted=transportManager.enqueue(ack.toJson(),"GATEWAY",true);
+     JsonDocument payload;payload["received_message_id"]=data["received_message_id"];payload["status"]="RECEIVED";serializeJson(payload,ack.payload);accepted=transportManager.enqueue(ack.toJson(),"MQTT",true);
    }else if(op=="COMPARE"&&data.size()==3){
      JsonDocument own; if(MqttDigest::snapshot(profile.as<JsonObjectConst>(),sharedRevision,own)){
        auto peer=data["snapshot"].as<JsonObjectConst>();String peerRaw;serializeJson(peer,peerRaw);
@@ -132,19 +134,20 @@ void begin(const String& raw,uint32_t revision){
  sharedRevision=revision;
  if(!runtimeMutex)runtimeMutex=xSemaphoreCreateMutex();
  if((HardwareProfile::ExplicitRole&&!HardwareProfile::Master)||configManager.get().role!=DeviceRole::MASTER||deserializeJson(profile,raw))return;String field;if(!MqttContract::validate(profile.as<JsonObjectConst>(),field,true)){profile.clear();return;}
- device=configManager.get().device_id;queue=xQueueCreate(3,sizeof(Received*));if(!queue)return;
+ profilePresent=true;device=configManager.get().device_id;queue=xQueueCreate(3,sizeof(Received*));if(!queue)return;
  if(requestedEnabled.load()&&!startClient())recovery.failed(millis());
 }
 void requestEnabled(bool enabled){requestedEnabled=enabled;}
 void requestReconnect(){recycleRequested=true;}
 void loop(){
  if(runtimeMutex&&xSemaphoreTake(runtimeMutex,0)==pdTRUE){
+  if(linkWatch.poll(millis(),requestedEnabled.load(),WiFi.isConnected(),up.load(),clientRunning.load(),profile["timeout_s"].as<uint32_t>()*1000))recycleRequested=true;
   if(recycleRequested.exchange(false)){
    // Release SDK task, TLS context and unconfirmed broker outbox together.
    // NetworkService keeps application-level retries until PERSISTED/expiry.
    up=false;subscriptionMask=0;
    if(client){unconfirmedBytesReleased+=esp_mqtt_client_get_outbox_size(client);if(clientRunning)esp_mqtt_client_stop(client);esp_mqtt_client_destroy(client);client=nullptr;}
-   clientRunning=false;assembly=Received{};assembling=false;offset=0;++recycles;recovery.failed(millis());
+   clientRunning=false;assembly=Received{};assembling=false;offset=0;++recycles;linkWatch.recycled();recovery.failed(millis());
   }
   if(!client&&requestedEnabled&&profile.size()&&WiFi.isConnected()&&time(nullptr)>1700000000&&recovery.due(millis(),heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT),heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT))){if(startClient())recovery.started();else recovery.failed(millis());}
   xSemaphoreGive(runtimeMutex);
@@ -152,7 +155,7 @@ void loop(){
  if(client&&requestedEnabled.load()!=clientRunning.load()){if(requestedEnabled){if(esp_mqtt_client_start(client)==ESP_OK)clientRunning=true;}else{if(esp_mqtt_client_stop(client)==ESP_OK){clientRunning=false;up=false;subscriptionMask=0;}}}if(!requestedEnabled)return;if(up)recovery.connected();if(!queue||!runtimeMutex||xSemaphoreTake(runtimeMutex,0)!=pdTRUE)return;Received* pending=nullptr;if(xQueueReceive(queue,&pending,0)==pdTRUE){std::unique_ptr<Received> owner(pending);receive(*pending);}static uint32_t sent=0;if(up&&millis()-sent>30000){sent=millis();JsonDocument snapshot,data;if(MqttDigest::snapshot(profile.as<JsonObjectConst>(),sharedRevision,snapshot)){data["op"]="COMPARE";data["snapshot"]=snapshot;data["digest"]=MqttDigest::digest(snapshot);send("config",data.as<JsonObjectConst>());}}xSemaphoreGive(runtimeMutex);}
 bool controlReply(const String& raw){if(!runtimeMutex||xSemaphoreTake(runtimeMutex,pdMS_TO_TICKS(20))!=pdTRUE)return false;JsonDocument d;bool ok=!deserializeJson(d,raw)&&send("config",d.as<JsonObjectConst>());xSemaphoreGive(runtimeMutex);return ok;}
 bool connected(){return up;}
-bool configured(){return client!=nullptr;}
+bool configured(){return profilePresent.load();}
 bool publish(const Message& packet){if(!runtimeMutex||xSemaphoreTake(runtimeMutex,0)!=pdTRUE)return false;JsonDocument parsed,data;if(deserializeJson(parsed,packet.toJson())){xSemaphoreGive(runtimeMutex);return false;}data["packet"]=parsed;String type=packet.type==PacketType::TELEMETRY?"telemetry":packet.type==PacketType::ACK||packet.type==PacketType::RESPONSE?"command_ack":packet.type==PacketType::EVENT||packet.type==PacketType::ALARM||packet.type==PacketType::DIAGNOSTIC?"events":"status";bool ok=send(type,data.as<JsonObjectConst>(),packet.messageId);xSemaphoreGive(runtimeMutex);return ok;}
 String status(){JsonDocument d;if(!runtimeMutex||xSemaphoreTake(runtimeMutex,pdMS_TO_TICKS(20))!=pdTRUE){d["state"]="unknown";d["status_label"]=!WiFi.isConnected()?"WIFI_DISCONNECTED":time(nullptr)<1700000000?"TIME_NOT_SYNCED":"UNKNOWN";d["station_ip"]=WiFi.localIP().toString();d["comparison"]["status"]="UNKNOWN";d["subscription_state"]="UNKNOWN";String raw;serializeJson(d,raw);return raw;}d["tls_stack_error"]=lastTlsError.load();d["certificate_verify_flags"]=lastCertFlags.load();d["tls_client_recycles"]=recycles.load();d["unconfirmed_outbox_bytes_released"]=unconfirmedBytesReleased.load();d["tls_recovery_pending"]=recovery.pending;d["runtime_enabled"]=requestedEnabled.load();d["device_role"]=configManager.roleString();d["wifi_state"]=WiFi.isConnected()?"CONNECTED":"WIFI_DISCONNECTED";d["station_ip"]=WiFi.localIP().toString();d["time_state"]=time(nullptr)>1700000000?"CLOCK_VALID":"TIME_NOT_SYNCED";d["unix_time"]=time(nullptr);d["ntp_status"]="UNKNOWN";d["status_label"]=!WiFi.isConnected()?"WIFI_DISCONNECTED":time(nullptr)<1700000000?"TIME_NOT_SYNCED":up?"CONNECTED":failure==1?"TLS_FAILED":failure==2?"AUTH_FAILED":failure==3?"CONNECTION_FAILED":client?"CONNECTING":"UNKNOWN";d["tls_verification_required"]=true;d["tls_state"]=up?"VERIFIED":failure==1?"TLS_FAILED":"UNKNOWN";d["authentication_state"]=up?"ACCEPTED":failure==2?"AUTH_FAILED":"UNKNOWN";d["subscription_state"]=!up?"UNKNOWN":subscriptionRejected?"SUBSCRIPTION_REJECTED":subscriptionMask==63?"READY":"SUBSCRIPTION_PENDING";d["last_connected_at"]=lastConnected.load();d["last_outbound_queued_at"]=lastQueued.load();d["last_broker_puback_at"]=lastPuback.load();d["last_broker_frame_received_at"]=lastReceived.load();d["chat_inbox_count"]=inboxCount;d["outbox_bytes"]=client?esp_mqtt_client_get_outbox_size(client):0;d["publish_attempts"]=publishAttempts.load();d["enqueued"]=enqueued.load();d["pubacks"]=pubacks.load();d["publish_error"]=publishError.load();d["state"]=!requestedEnabled?(clientRunning?"pause_requested":"paused"):up?"connected":failure==1?"TLS failure":failure==2?"authentication failure":failure==3?"connection failure":client?"connecting":"disconnected";d["reconnect_count"]=reconnects.load();d["dropped"]=dropped.load();d["comparison"]["status"]=comparedAt&&millis()-comparedAt<120000?comparison:"UNKNOWN";d["comparison"]["message"]=comparison=="MISMATCH"?"Master config differs":"";JsonDocument f;deserializeJson(f,mismatchFields);d["comparison"]["fields"]=f;String s;serializeJson(d,s);xSemaphoreGive(runtimeMutex);return s;}
 }

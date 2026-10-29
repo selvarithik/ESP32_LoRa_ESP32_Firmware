@@ -11,6 +11,7 @@
  X(telemetry_seconds) X(command_timeout_ms) X(message_max_age_ms) X(dht_enabled) X(dht_pin) \
  X(server_led_enabled) X(server_led_active_high) X(tm1637_enabled) \
  X(ina219_enabled) X(ina219_address) X(ina219_shunt_milliohms) X(mq135_enabled) X(mq135_warmup_seconds) \
+ X(sleep_mode) X(lora_sleep_mode) X(lora_work_mode) X(lora_wor_cycle_ms) X(lora_packet_bytes) X(lora_apply_settings) \
  X(wifi_dhcp) X(wifi_ip) X(wifi_subnet) X(wifi_gateway) X(wifi_dns) X(wifi_dns2) X(sleep_enabled) X(sleep_start_minute) X(sleep_duration_seconds) X(sleep_days_mask) X(utc_offset_minutes) \
  X(ethernet_interface) X(ethernet_dhcp) X(ethernet_ip) X(ethernet_subnet) X(ethernet_gateway) X(ethernet_dns) \
  X(lora_enabled) X(lora_uart) X(lora_address_high) X(lora_address_low) \

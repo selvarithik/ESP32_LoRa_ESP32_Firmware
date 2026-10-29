@@ -74,6 +74,9 @@ struct DeviceConfig {
     uint16_t ina219_shunt_milliohms = 0; // Unknown: no current/power until configured.
     bool mq135_enabled = false; // Physical voltage-divider verification required.
     uint32_t mq135_warmup_seconds = 86400; // Conservative initial conditioning, not calibration.
+    String sleep_mode = "DEEP", lora_sleep_mode = "KEEP", lora_work_mode = "NORMAL";
+    uint16_t lora_wor_cycle_ms = 2000, lora_packet_bytes = 200;
+    bool lora_apply_settings = false;
     bool sleep_enabled = false;
     uint16_t sleep_start_minute = 0;
     uint32_t sleep_duration_seconds = 3600;

@@ -15,6 +15,7 @@ public:
  String sender() const;
  String statusJson() const;
  bool requestProbe(bool readOnly=true);
+ bool powerSleep(bool sleep);
  bool delivery(String& messageId,bool& success);
 };
 extern LoRaTransport loraTransport;

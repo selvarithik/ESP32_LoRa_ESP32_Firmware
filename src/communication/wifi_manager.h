@@ -11,6 +11,9 @@ public:
 
     bool connect(const String& ssid, const String& password, uint32_t timeoutMs = 15000);
     bool disconnect();
+    void suspend(bool value);
+private: bool suspended=false;
+public:
 
     String scanJson();
     String statusJson() const;

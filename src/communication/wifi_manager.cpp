@@ -18,7 +18,9 @@ bool WiFiManagerESP32::begin(const DeviceConfig& c) {
     if(_enabled&&_ssid.length())connect(_ssid,_password,0);
     return true;
 }
+void WiFiManagerESP32::suspend(bool value){if(value==suspended)return;suspended=value;if(value){connectedSince=0;_apStarted=false;WiFi.softAPdisconnect(true);WiFi.disconnect(true);}else if(_enabled){WiFi.mode(WIFI_STA);connect(_ssid,_password,0);}}
 void WiFiManagerESP32::loop() {
+    if(suspended)return;
     uint32_t now=millis();auto status=WiFi.status();
     if(status!=previous) { previous=status;logger.info("WIFI",status==WL_CONNECTED?"Station connected IP="+WiFi.localIP().toString():"Station disconnected; recovery active"); }
     if(status==WL_CONNECTED) {

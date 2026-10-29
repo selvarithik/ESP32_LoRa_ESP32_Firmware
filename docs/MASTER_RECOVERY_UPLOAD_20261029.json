@@ -1,0 +1,17 @@
+{
+  "port": "COM8",
+  "device_id": "ESP32-10777D842178",
+  "flash_bytes": 4194304,
+  "backup_sha256": "37a7cad765ccef5565b9ea4194bce58d67fe97dc1e1d6fb08df7ed274f470c73",
+  "full_backup_verified": true,
+  "backup_encrypted": true,
+  "partition_matches_built_huge_app": true,
+  "physical_upload": true,
+  "application_bytes": 1367824,
+  "application_sha256": "cfcba217494b1a09a8c340a5ce095a596337742571f1a9fbb82af0f2d38c8e95",
+  "application_readback_verified": true,
+  "all_bytes_outside_application_unchanged": true,
+  "nvs_ota_partitions_bootloader_preserved": true,
+  "filesystem_preserved": true,
+  "reset_requested": true
+}

@@ -1,0 +1,28 @@
+{
+  "COM8": {
+    "image": "esp32_slave",
+    "hash_verified": true,
+    "saved_role": "NODE",
+    "changed_config_fields": [
+      "configuration_revision",
+      "master_id",
+      "role"
+    ],
+    "unrelated_config_fields_unchanged": true,
+    "wifi_mqtt_sensor_settings_unchanged": true
+  },
+  "usb_status": {
+    "COM8": {
+      "device_id": "ESP32-10777D842178",
+      "role": "NODE",
+      "station_ip": "192.168.1.104",
+      "uptime_ms": 47264
+    },
+    "COM11": {
+      "device_id": "ESP32-CC9B23E2DEC4",
+      "role": "MASTER",
+      "station_ip": "0.0.0.0",
+      "uptime_ms": 35145
+    }
+  }
+}

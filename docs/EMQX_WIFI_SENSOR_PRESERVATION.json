@@ -1,0 +1,10 @@
+{
+  "comparison": "Protected NVS snapshots before first and final application uploads",
+  "changed_config_fields": [
+    "configuration_revision",
+    "local_ip_enabled"
+  ],
+  "wifi_fields_unchanged": true,
+  "sensor_display_and_interval_fields_unchanged": true,
+  "only_intended_transport_selection_and_revision_changed": true
+}

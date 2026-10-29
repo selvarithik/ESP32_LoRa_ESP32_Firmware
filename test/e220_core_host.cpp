@@ -12,7 +12,7 @@ int main(){
 #else
  assert(!HardwareProfile::Master&&!HardwareProfile::inaAllowed(false));
 #endif
- assert(HardwareProfile::roleMatches(HardwareProfile::Master)&&!HardwareProfile::roleMatches(!HardwareProfile::Master));
+ assert(HardwareProfile::roleMatches(true)&&HardwareProfile::roleMatches(false));
  uint8_t registers[]={0xc1,0,6,0x12,0x34,0x62,0,23,0};E220Core::Settings settings;assert(E220Core::settings(registers,9,settings));assert(settings.address==0x1234&&settings.baud==9600&&settings.packet==200&&settings.channel==23&&settings.airRate==2&&settings.power==22&&!settings.fixed);
  assert(!E220Core::settings(registers,8,settings));registers[7]=81;assert(!E220Core::settings(registers,9,settings));registers[7]=23;registers[5]=0x6a;assert(!E220Core::settings(registers,9,settings));registers[5]=0x62;
  for(unsigned size=1;size<=500;++size){std::vector<uint8_t> input(size),encoded(size+size/254+3),decoded(size);for(unsigned i=0;i<size;++i)input[i]=(i*31)%256;size_t n=E220Core::cobsEncode(input.data(),size,encoded.data(),encoded.size());assert(n&&encoded[n-1]==0);size_t m=E220Core::cobsDecode(encoded.data(),n-1,decoded.data(),decoded.size());assert(m==size&&decoded==input);assert(!E220Core::cobsEncode(input.data(),size,encoded.data(),size));}

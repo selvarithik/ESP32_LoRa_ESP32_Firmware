@@ -1,0 +1,11 @@
+{
+  "port": "COM11",
+  "device_id": "ESP32-CC9B23E2DEC4",
+  "application_role": "slave",
+  "application_offset": 65536,
+  "image_bytes": 1298768,
+  "image_sha256": "c5b6f1b5ad4484a463d8b5e7363ed43c04c2bc6245dbc6172f34ab1cf5a4d61e",
+  "upload_hash_verified": true,
+  "partition_nvs_ota_bytes_unchanged_during_upload": true,
+  "protected_backup_roundtrip_verified": true
+}

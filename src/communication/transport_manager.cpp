@@ -70,7 +70,7 @@ bool request(const Frame& f) {
             JsonDocument d;
             if(!deserializeJson(d,sink.body)&&d["accepted"].is<bool>()&&d["accepted"].as<bool>()) {
                 ok=true;
-                if(f.gateway) for(JsonVariant v:d["commands"].as<JsonArray>()) {String raw;serializeJson(v,raw);transportManager.enqueue(raw,"GATEWAY",true);}
+                if(f.gateway) for(JsonVariant v:d["commands"].as<JsonArray>()) {String raw;serializeJson(v,raw);transportManager.enqueue(raw,"IP",true);}
             }
         }
     }
@@ -106,14 +106,20 @@ bool localRequest(const Frame& f){
  localStage=8;JsonDocument result;Message sent;if(!Message::fromJson(String(f.raw),sent)||!StrictJson::valid(response.body)||deserializeJson(result,response.body)||result["schema_version"].as<int>()!=1||(!result["accepted"].is<bool>()||!result["accepted"].as<bool>())||result["received_message_id"].as<String>()!=sent.messageId||(f.gateway&&result["receipt"].as<String>()!="PERSISTED")){networkError=-1103;localState=5;return false;}
  if(f.gateway)for(JsonVariant command:result["commands"].as<JsonArray>()){
    String raw;serializeJson(command,raw);Message packet;
-   if(!Message::fromJson(raw,packet)||packet.source!="GATEWAY"||!transportManager.enqueue(raw,"GATEWAY",true)){networkError=-1104;localState=5;return false;}
+   if(!Message::fromJson(raw,packet)||packet.source!="GATEWAY"||!transportManager.enqueue(raw,"IP",true)){networkError=-1104;localState=5;return false;}
  }
  if(!f.gateway&&String(f.host)==settings.master_host){IPAddress ip;if(WiFi.hostByName(f.host,ip))masterIp=static_cast<uint32_t>(ip);}
  localState=2;return true;
 }
+std::atomic<bool> wantedLocal{false},activeLocal{false},pauseRequest{false},pauseAck{false};
+std::atomic<uint32_t> receiptCount{0};
 void worker(void*) {
     uint32_t lastProbe=millis()-60000;bool timeStarted=false,mqttStarted=false;
     for(;;) {
+        if(pauseRequest){if(!pauseAck){lastGateway=0;lastMaster=0;}CanonicalMqtt::requestEnabled(false);CanonicalMqtt::loop();mqttUp=false;pauseAck=true;vTaskDelay(pdMS_TO_TICKS(20));continue;}
+        pauseAck=false;
+        if(settings.local_ip_enabled!=wantedLocal.load()){settings.local_ip_enabled=wantedLocal.load();activeLocal=settings.local_ip_enabled;lastGateway=0;lastOk=0;}
+        CanonicalMqtt::requestEnabled(!settings.local_ip_enabled&&settings.role==DeviceRole::MASTER);
         bool wifi=IpNetwork::available();
         if(!settings.local_ip_enabled&&wifi&&!timeStarted&&(!initialMqttProfile.isEmpty()||settings.server_https||settings.mqtt_tls||(!settings.internet_probe_host.isEmpty()&&settings.internet_probe_tls))){configTime(0,0,"pool.ntp.org");timeStarted=true;}
         if(!settings.local_ip_enabled&&wifi&&!settings.internet_probe_host.isEmpty()&&millis()-lastProbe>=60000) {
@@ -135,9 +141,9 @@ void worker(void*) {
                 // Accepted is pending, not persistence. Release the in-flight
                 // gate for bounded retries; only PERSISTED completes the packet.
                 mqttPending=CanonicalMqtt::publish(packet);if(mqttPending)networkError=202;
-            } else if(!frame.gateway||(!settings.gateway_token.isEmpty()&&!settings.server_host.isEmpty()))ok=request(frame);
+            } else if(!frame.gateway||(!CanonicalMqtt::configured()&&!settings.gateway_token.isEmpty()&&!settings.server_host.isEmpty()))ok=request(frame);
         }
-        if(ok){lastOk=millis();if(frame.gateway)lastGateway=millis();else if(String(frame.host)==settings.master_host)lastMaster=millis();++successes;}else if(!mqttPending){++failures;failureStage=localStage.load();failureCode=networkError.load();}
+        if(ok){lastOk=millis();if(frame.gateway){lastGateway=millis();++receiptCount;}else if(String(frame.host)==settings.master_host)lastMaster=millis();++successes;}else if(!mqttPending){++failures;failureStage=localStage.load();failureCode=networkError.load();}
         sending=false;
         Result result{};strlcpy(result.id,packet.messageId.c_str(),sizeof(result.id));result.success=ok;result.gateway=frame.gateway;result.error=networkError.load();
         if(xQueueSend(results,&result,0)!=pdTRUE)++overflows;
@@ -145,7 +151,7 @@ void worker(void*) {
 }
 }
 void TransportManager::begin() {
-    settings=configManager.get();if(!settings.local_ip_enabled)initialMqttProfile=mqttStaging.active();initialSharedRevision=mqttStaging.sharedRevision();
+    settings=configManager.get();wantedLocal=settings.local_ip_enabled;activeLocal=settings.local_ip_enabled;initialMqttProfile=mqttStaging.active();initialSharedRevision=mqttStaging.sharedRevision();
     CanonicalMqtt::requestEnabled(!settings.local_ip_enabled && settings.role==DeviceRole::MASTER);
     outgoing=xQueueCreate(6,sizeof(Frame*));incoming=xQueueCreate(6,sizeof(Frame*));results=xQueueCreate(8,sizeof(Result));
     if(!outgoing||!incoming||!results){++overflows;return;}
@@ -178,7 +184,12 @@ bool TransportManager::gatewayConnected() const {return lastGateway&&millis()-la
 bool TransportManager::mqttConnected() const{return mqttUp;}
 uint32_t TransportManager::lastSuccess() const{return lastOk;}
 uint32_t TransportManager::dropped() const{return overflows;}
-void TransportManager::gatewayReceipt(){lastGateway=millis();lastOk=millis();}
+void TransportManager::gatewayReceipt(){lastGateway=millis();lastOk=millis();++receiptCount;}
+void TransportManager::requestLocalMode(bool value){wantedLocal=value;}
+bool TransportManager::localMode()const{return activeLocal;}
+void TransportManager::pause(bool value){pauseRequest=value;}
+bool TransportManager::paused()const{return pauseAck;}
+uint32_t TransportManager::receiptCounter()const{return receiptCount;}
 String TransportManager::masterAddress() const {return IPAddress(masterIp.load()).toString();}
 int TransportManager::lastError() const{return networkError;}
 String TransportManager::internetStatus() const {

@@ -15,6 +15,6 @@ constexpr bool ExplicitRole=false,Master=false; // Legacy esp32dev target retain
 #endif
 constexpr int Dht=4,Mq135=34,InaSda=21,InaScl=22,RadioRx=16,RadioTx=17,RadioM0=25,RadioM1=26,RadioAux=27;
 constexpr bool DisplayPresent=false;
-inline bool roleMatches(bool storedMaster){return !ExplicitRole||storedMaster==Master;}
-inline bool inaAllowed(bool storedMaster){return roleMatches(storedMaster)&&(!ExplicitRole||Master);}
+inline bool roleMatches(bool){return true;} // Role is selected by persisted configuration, not image.
+inline bool inaAllowed(bool storedMaster){return storedMaster;}
 }

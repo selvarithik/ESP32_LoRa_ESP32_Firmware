@@ -11,6 +11,7 @@ for(const width of [360,1280]){
  page.setDefaultTimeout(10000);const errors=[],external=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());if(url.origin!=='http://esp32.test'){external.push(req.url());return route.abort();}
+  if(url.pathname==='/api/connectivity')return route.fulfill({contentType:'application/json',body:JSON.stringify({wifi_connected:true,server_connected:false,mqtt_connected:true,clock_valid:false,radio:{enabled:false,state:'DISABLED',error:'DISABLED'}})});
   if(url.pathname==='/mqtt')return route.fulfill({contentType:'text/html',body:html});
   if(url.pathname==='/api/auth/session')return route.fulfill({contentType:'application/json',body:JSON.stringify({csrf:'fixture-csrf',authenticated:true})});
   let status=200,body=state;
@@ -40,6 +41,7 @@ for(const width of [360,1280]){
  await page.getByRole('button',{name:'Cancel candidate',exact:true}).click();await page.waitForFunction(()=>document.getElementById('transaction').textContent==='ROLLED_BACK');
  state.comparison={status:'MISMATCH',message:'Master config differs'};await page.reload();await page.waitForFunction(()=>document.getElementById('comparison').textContent==='Master config differs');
  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+ assert.equal(await page.locator('.esp-topbar').count(),0);assert.equal(await page.locator('.esp-menu a[aria-current=page]').innerText(),'MQTT');assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
  if(process.env.CAPTURE_SCREENSHOTS==='1')await page.screenshot({path:path.join(root,'docs',`mqtt-page-mock-${width}.png`),fullPage:true});
  console.log(`PASS MQTT mock UI ${width}px: no secrets, mandatory TLS, staging, cancellation, field errors, mismatch rendering, offline assets`);await context.close();
 }

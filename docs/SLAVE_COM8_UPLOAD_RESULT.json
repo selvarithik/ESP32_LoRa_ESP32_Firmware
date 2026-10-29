@@ -1,0 +1,20 @@
+{
+  "device_id": "ESP32-CC9B23E2DEC4",
+  "port": "COM8",
+  "flash_bytes": 4194304,
+  "protected_backup_verified": true,
+  "partition_matches_build": true,
+  "active_application": "app0",
+  "application_offset": 65536,
+  "image_bytes": 1291552,
+  "image_sha256": "bbe1472de0ff75b59d97331a8306a6b4378cd7a24f2628eb289244f7b269b915",
+  "settings_changes_requested": false,
+  "result": "FAILED_PARTIAL_APPLICATION_WRITE",
+  "progress_last_reported_percent": 5,
+  "protocol_hash_verified": false,
+  "error": "Windows serial device failure 31 after USB connection loss",
+  "settings_partitions_targeted": false,
+  "settings_post_write_verification": "PENDING_DEVICE_RECONNECT",
+  "master_touched": false,
+  "recovery_required": "Reconnect Slave USB; enter ROM download mode; repeat application-only write at 0x10000. Do not erase NVS or alter partitions."
+}
