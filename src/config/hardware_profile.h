@@ -15,6 +15,7 @@ constexpr bool ExplicitRole=false,Master=false; // Legacy esp32dev target retain
 #endif
 constexpr int Dht=4,Mq135=34,InaSda=21,InaScl=22,RadioRx=16,RadioTx=17,RadioM0=25,RadioM1=26,RadioAux=27;
 constexpr bool DisplayPresent=false;
+inline bool radioUartPins(bool master,int rx,int tx){return (rx==RadioRx&&tx==RadioTx)||(master&&rx==32&&tx==33);}
 inline bool roleMatches(bool){return true;} // Role is selected by persisted configuration, not image.
-inline bool inaAllowed(bool storedMaster){return storedMaster;}
+inline bool inaAllowed(bool){return true;} // Both boards now carry INA219 hardware.
 }

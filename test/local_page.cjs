@@ -1,6 +1,6 @@
 // Browser checks use simulated API replies; they do not claim on-board verification.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'C:/Users/Admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root=path.resolve(__dirname,'..');
 const source=fs.readFileSync(path.join(root,'src/web/local_web_server.cpp'),'utf8');
 const html=source.match(/R"HTML\(([\s\S]*?)\)HTML"/)[1];

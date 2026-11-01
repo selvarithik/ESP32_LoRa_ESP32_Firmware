@@ -1,0 +1,9 @@
+{
+  "device_id": "ESP32-842F2AE81F84",
+  "port": "COM8",
+  "original_application_restored": true,
+  "full_flash_matches_verified_original_backup": true,
+  "verification": "DEVICE_MD5",
+  "left_in_download_mode": true,
+  "bootloader_or_partition_table_written": false
+}

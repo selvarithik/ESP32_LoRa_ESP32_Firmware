@@ -1,0 +1,30 @@
+{
+  "baseline_sha256": "da69248c363d894a11e23dffe5926882463ce081d5e21e2096803f399d22abbc",
+  "device_id": "ESP32-842F2AE81F84",
+  "port": "COM8",
+  "owner_approved_boot_metadata_repair": true,
+  "physical_upload": true,
+  "whole_flash_verified": "DEVICE_MD5_EXPECTED_IMAGE",
+  "partition_entries_unchanged": true,
+  "nvs_ota_customization_second_slot_preserved_before_boot": true,
+  "application_sha256": "78859f95252149792872cc2c9ca7c457c70a62b2ae1eb7fb26b32b08b83202ba",
+  "application_offset": "0x100000",
+  "application_capacity": 1572864,
+  "bootloader_sha256": "3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8",
+  "partition_table_sha256": "1a0391cff18d28168ec78f90f192884ff535c39a4a1ae89bb57627f0974b7f39",
+  "reset_requested": true,
+  "runtime_boot_verified": true,
+  "runtime_role": "NODE",
+  "boot_stability_observed_seconds": 83.6,
+  "slave_radio_result": {
+    "error": "MODE_RESTORE_TIMEOUT",
+    "aux_ready": false,
+    "public_settings_read": false,
+    "rf_test_performed": false
+  },
+  "master_radio_result": {
+    "error": "SETTINGS_READ_TIMEOUT",
+    "aux_ready": false,
+    "rf_test_performed": false
+  }
+}

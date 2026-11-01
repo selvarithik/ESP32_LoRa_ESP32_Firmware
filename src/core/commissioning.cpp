@@ -1,6 +1,7 @@
 #include "../communication/canonical_mqtt.h"
 #include "../sensors/sensor_manager.h"
 #include "../config/hardware_profile.h"
+#include "../config/config_fields.h"
 #include "commissioning_role_core.h"
 #include "network_commission_core.h"
 #include "../communication/lora_transport.h"
@@ -55,6 +56,7 @@ void dispatch(){
     String op=d["op"]|""; // Physical USB possession authorizes commissioning. Never echo input.
     if(op=="status"&&d.size()==1){
         JsonDocument out;out["ok"]=true;out["device_id"]=configManager.get().device_id;out["username"]=accountName;out["password_change_required"]=required();out["station_ip"]=WiFi.localIP().toString();out["ap_ip"]=WiFi.softAPIP().toString();out["free_heap"]=ESP.getFreeHeap();out["loop_stack_free_min_bytes"]=uxTaskGetStackHighWaterMark(nullptr);out["network_stack_free_min_bytes"]=transportManager.minimumStackFreeBytes();out["free_8bit_heap"]=heap_caps_get_free_size(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_8bit_block"]=heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL|MALLOC_CAP_8BIT);out["largest_free_block"]=ESP.getMaxAllocHeap();out["minimum_free_heap"]=ESP.getMinFreeHeap();out["uptime_ms"]=millis();out["unix_time"]=time(nullptr);
+        out["lora_rx_pin"]=configManager.get().lora_rx_pin;out["lora_tx_pin"]=configManager.get().lora_tx_pin;
         JsonDocument mqtt;deserializeJson(mqtt,mqttStaging.status(false));out["mqtt"]=mqtt;
         JsonDocument local;deserializeJson(local,transportManager.localStatus());out["local_ip"]=local;out["role"]=configManager.roleString();JsonDocument radio;deserializeJson(radio,loraTransport.statusJson());out["radio"]=radio;out["dht_enabled"]=configManager.get().dht_enabled;out["dht_pin"]=configManager.get().dht_pin;out["ina219_enabled"]=configManager.get().ina219_enabled;out["mq135_enabled"]=configManager.get().mq135_enabled;JsonDocument sensors;sensors.to<JsonArray>();for(unsigned i=0;i<3;++i){JsonDocument reading;deserializeJson(reading,sensorManager.telemetryJson(i));sensors.as<JsonArray>().add(reading);}out["sensors"]=sensors;JsonDocument indicators;deserializeJson(indicators,connectionIndicators.statusJson());out["indicators"]=indicators;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
     }else if(op=="set_role"){
@@ -77,6 +79,9 @@ void dispatch(){
     }else if(op=="self_test"&&d.size()==1){
         uint32_t started=millis();bool ok=derive("public-pbkdf2-fixture","00112233445566778899aabbccddeeff")=="71c9db0332994401d7d514fe7cd8fc4ca25d7286a222e83ea86d32600f7410e0";
         JsonDocument out;out["ok"]=ok;out["elapsed_ms"]=millis()-started;String raw;serializeJson(out,raw);Serial.print("[COMMISSION] ");Serial.println(raw);
+    }else if(op=="ip_backup"){
+        if(d.size()!=5||d["confirm_device_id"].as<String>()!=configManager.get().device_id||!d["host"].is<const char*>()||!d["port"].is<uint16_t>()||d["port"].is<bool>()||!d["timeout_seconds"].is<uint32_t>()||d["timeout_seconds"].is<bool>()){reply(false,"INVALID_BACKUP_REQUEST");return;}
+        reply(transportManager.requestIpBackup(d["host"].as<String>(),d["port"],d["timeout_seconds"]),"BOUNDED_IP_BACKUP_RESULT_NO_SAVED_CHANGE");
     }else if(op=="mqtt_reconnect"){
         if(d.size()!=2||d["confirm_device_id"].as<String>()!=configManager.get().device_id){reply(false,"IDENTITY_CONFIRMATION_REQUIRED");return;}
         CanonicalMqtt::requestReconnect();reply(true,"MQTT_RUNTIME_RECONNECT_REQUESTED");
@@ -86,7 +91,25 @@ void dispatch(){
     }else if(op=="recover_account"){
         if(d.size()!=2||d["confirm_device_id"].as<String>()!=configManager.get().device_id){reply(false,"IDENTITY_CONFIRMATION_REQUIRED");return;}
         reply(setPassword("admin",true,"admin"),"ACCOUNT_RECOVERY_PASSWORD_CHANGE_REQUIRED");
-    }else if(op=="radio_probe"){if(d.size()!=2||d["confirm"].as<String>()!="READ_ONLY_E220_SETTINGS"){reply(false,"CONFIRMATION_REQUIRED");return;}reply(loraTransport.requestProbe(),"RADIO_PROBE_REQUESTED_NO_REGISTER_WRITES");
+    }else if(op=="radio_uart_pins"){
+        const auto& current=configManager.get();
+        if(d.size()!=4||current.role!=DeviceRole::MASTER||d["confirm_device_id"].as<String>()!=current.device_id||!d["lora_rx_pin"].is<int>()||d["lora_rx_pin"].is<bool>()||!d["lora_tx_pin"].is<int>()||d["lora_tx_pin"].is<bool>()||!HardwareProfile::radioUartPins(true,d["lora_rx_pin"].as<int>(),d["lora_tx_pin"].as<int>())){reply(false,"RADIO_PINS_ROLE_OR_IDENTITY_INVALID");return;}
+        DeviceConfig before=current;String error;
+        if(!configManager.setRadioUartPins(d["lora_rx_pin"].as<int>(),d["lora_tx_pin"].as<int>(),error)){reply(false,"RADIO_PIN_SAVE_FAILED");return;}
+        const auto& after=configManager.get();bool preserved=before.role==after.role&&before.device_id==after.device_id&&before.configuration_version==after.configuration_version;
+#define CHECK_PIN_PRESERVATION(f) if(strcmp(#f,"lora_rx_pin")&&strcmp(#f,"lora_tx_pin")&&before.f!=after.f)preserved=false;
+        CONFIG_FIELDS(CHECK_PIN_PRESERVATION)
+#undef CHECK_PIN_PRESERVATION
+        if(!preserved){configManager.get()=before;reply(false,configManager.save()?"UNRELATED_CHANGE_RESTORED":"RESTORE_STORAGE_FAILED");return;}
+        JsonDocument result;result["ok"]=true;result["code"]="RADIO_PINS_SAVED_RESTART_REQUIRED";result["lora_rx_pin"]=after.lora_rx_pin;result["lora_tx_pin"]=after.lora_tx_pin;result["unrelated_settings_preserved"]=true;result["restart_required"]=true;String response;serializeJson(result,response);Serial.print("[COMMISSION] ");Serial.println(response);
+    }else if(op=="uart_loopback"){
+        const auto& c=configManager.get();String confirmation=c.lora_rx_pin==16&&c.lora_tx_pin==17?String("E220_TX_RX_DISCONNECTED_GPIO16_TO_GPIO17"):String("E220_DISCONNECTED_GPIO_RX")+c.lora_rx_pin+"_TX"+c.lora_tx_pin+"_SHORTED";
+        if(d.size()!=3||d["confirm_device_id"].as<String>()!=c.device_id||d["confirm"].as<String>()!=confirmation){reply(false,"UART_ISOLATION_AND_IDENTITY_REQUIRED");return;}
+        Serial.print("[COMMISSION] ");Serial.println(loraTransport.isolatedUartLoopback());
+    }else if(op=="radio_probe"){
+        bool hasPort=!d["uart"].isUnbound();
+        if(d.size()!=(hasPort?3:2)||d["confirm"].as<String>()!="READ_ONLY_E220_SETTINGS"||(hasPort&&(!d["uart"].is<uint8_t>()||d["uart"].is<bool>()||(d["uart"].as<unsigned>()!=1&&d["uart"].as<unsigned>()!=2)))){reply(false,"CONFIRMATION_OR_UART_INVALID");return;}
+        reply(loraTransport.requestProbe(true,hasPort?d["uart"].as<uint8_t>():2),"RADIO_PROBE_REQUESTED_NO_REGISTER_WRITES");
     }else if(op=="password"){
         String p=d["password"]|"";
         if(d.size()!=2||p.length()<12||p.length()>64||p=="admin"){reply(false,"INVALID_PASSWORD");return;}

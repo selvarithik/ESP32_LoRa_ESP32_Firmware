@@ -15,7 +15,7 @@ int main(){assert(FeatureCore::manualSleepRemaining(100,100,60)==65);assert(Feat
  assert(!canConfirm(Phase::TRIAL,true,true,true,200,200));
  assert(canConfirm(Phase::TRIAL,true,true,true,199,200));
  assert(HardwareProfile::roleMatches(true)&&HardwareProfile::roleMatches(false));
- assert(HardwareProfile::inaAllowed(true)&&!HardwareProfile::inaAllowed(false));
+ assert(HardwareProfile::inaAllowed(true)&&HardwareProfile::inaAllowed(false));
  assert(E220Core::mode("NORMAL")==0&&E220Core::mode("WOR_TX")==1&&E220Core::mode("WOR_RX")==2);
  const uint8_t previous[6]={0,0,0x62,0x3c,23,0x28};uint8_t out[6],reply[9]={0xc1,0,6};
  E220Core::Settings s;s.address=0x1234;s.baud=9600;s.airRate=2;s.channel=17;s.power=17;s.packet=128;s.fixed=true;s.rssi=true;s.lbt=true;

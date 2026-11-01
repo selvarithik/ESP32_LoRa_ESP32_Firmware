@@ -1,0 +1,34 @@
+{
+  "date": "2026-11-01",
+  "test": "Read-only E220 inspection after user-confirmed module swap and antennas attached",
+  "actual_boards": {
+    "COM8": {
+      "device_id": "ESP32-842F2AE81F84",
+      "role": "NODE",
+      "public_settings_read": true,
+      "observed": {
+        "address": 0,
+        "baud": 9600,
+        "channel": 18,
+        "air_rate_code": 2,
+        "power_dbm": 22,
+        "subpacket_bytes": 200,
+        "fixed_mode": false,
+        "rssi_enabled": false,
+        "lbt": false
+      }
+    },
+    "COM11": {
+      "device_id": "ESP32-10777D842178",
+      "role": "MASTER",
+      "public_settings_read": false,
+      "error": "SETTINGS_READ_TIMEOUT"
+    }
+  },
+  "COM10": "NOT_PRESENT",
+  "conclusion": "Failure remains with Master board/setup after module swap; module failure not established. Check Master wiring, power and UART/control GPIO path.",
+  "rf_delivery": "NOT_TESTED",
+  "configuration_writes": 0,
+  "radio_register_writes": 0,
+  "wifi_mqtt_sensor_settings": "NO_WRITES_PERFORMED"
+}

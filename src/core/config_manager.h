@@ -11,6 +11,7 @@ public:
     const DeviceConfig& get() const;
 
     bool setRole(const String& role);
+    bool setRadioUartPins(int rx,int tx,String& error);
     String roleString() const;
     String toJson() const;
     bool update(const String& json, String& error, bool persist = true);

@@ -1,6 +1,6 @@
 // Browser tests with mocked responses. These do not test NVS, TLS or on-board handlers.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'C:/Users/Admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const root=path.resolve(__dirname,'..');
 const html=fs.readFileSync(path.join(root,'src/web/mqtt_page.h'),'utf8').match(/R"MQTT\(([\s\S]*?)\)MQTT"/)[1];
 const defaults={profile_name:'Primary Broker',provider:'EMQX',host:'broker.test',port:8883,mqtt_version:'3.1.1',tls:true,ca_cert:'TEST CERTIFICATE',username:'',client_id:'master-test',keepalive_s:60,timeout_s:10,qos_default:1,topic_prefix:'selvarithik/gateway',gateway_id:'GW001'};

@@ -1,5 +1,5 @@
 const fs=require('node:fs'),assert=require('node:assert/strict');
-const {chromium}=require('C:/Users/Admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require('playwright');
 const html=fs.readFileSync(require('node:path').join(__dirname,'../src/web/access_page.h'),'utf8').match(/R"ACCESS\(([\s\S]*?)\)ACCESS"/)[1];
 (async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{
  const context=await browser.newContext(),page=await context.newPage();await page.clock.install();

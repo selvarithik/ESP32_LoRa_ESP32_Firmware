@@ -1,0 +1,141 @@
+{
+  "version": "1.1.8-master-uart32",
+  "pin_update": {
+    "ok": true,
+    "code": "RADIO_PINS_SAVED_RESTART_REQUIRED",
+    "lora_rx_pin": 32,
+    "lora_tx_pin": 33,
+    "unrelated_settings_preserved": true,
+    "restart_required": true
+  },
+  "protected": {
+    "device_id": true,
+    "role": true,
+    "dht_enabled": true,
+    "dht_pin": true,
+    "ina219_enabled": true,
+    "mq135_enabled": true,
+    "mqtt_fingerprint": true,
+    "mqtt_revision": true
+  },
+  "wiring_test": "OWNER_CONFIRMED_REWIRED_COM8",
+  "contract_version": "1.4.1",
+  "contract_sha256": "cdd19216fb270c93b3347aa894f0c90d7a40a1040d73da5c4d23da403a6aada5",
+  "deployment": {
+    "port": "COM8",
+    "device_id": "ESP32-10777D842178",
+    "flash_bytes": 4194304,
+    "backup_sha256": "2a5bde0e2aef7a4c921d56285a3aa038fa26ed70c3983929cc2b87326a1ac465",
+    "full_backup_verified": true,
+    "backup_encrypted": true,
+    "physical_upload": true,
+    "application_offset": 65536,
+    "application_capacity": 3145728,
+    "application_label": "app0",
+    "partition_matches_built_huge_app": true,
+    "partition_md5_valid": true,
+    "boot_metadata_repair_required": false,
+    "full_flash_verification_method": "DEVICE_MD5_EXPECTED_IMAGE",
+    "application_bytes": 1381168,
+    "application_sha256": "5e3e8c481e1aa4aeaa4ad900555b9f06613aff3e5bbcee21c02615e46b07129b",
+    "application_readback_verified": false,
+    "application_verified": true,
+    "all_bytes_outside_application_unchanged": true,
+    "nvs_ota_partitions_bootloader_preserved": true,
+    "filesystem_preserved": true,
+    "reset_requested": true
+  },
+  "cold_boot": {
+    "saved_rx": 32,
+    "saved_tx": 33,
+    "active_rx": 32,
+    "active_tx": 33,
+    "preserved": {
+      "device_id": true,
+      "role": true,
+      "dht_enabled": true,
+      "dht_pin": true,
+      "ina219_enabled": true,
+      "mq135_enabled": true,
+      "mqtt_fingerprint": true,
+      "mqtt_revision": true
+    }
+  },
+  "probe_results": {
+    "uart2": {
+      "attempts": 3,
+      "received_bytes": 0,
+      "result": "SETTINGS_READ_TIMEOUT"
+    },
+    "uart1_readonly": {
+      "attempts": 3,
+      "received_bytes": 0,
+      "result": "SETTINGS_READ_TIMEOUT"
+    },
+    "slave_COM11": "PUBLIC_SETTINGS_READ_PASSED",
+    "rf_delivery": "NOT_TESTED_MASTER_NO_REGISTER_RESPONSE"
+  },
+  "master_final_radio": {
+    "state": "ERROR",
+    "error": "SETTINGS_READ_TIMEOUT",
+    "module": "E220-900T22D",
+    "hardware_link_verified": false,
+    "public_settings_read": false,
+    "register_writes": 0,
+    "work_mode": "NORMAL",
+    "sleeping": false,
+    "wor_cycle_ms": 2000,
+    "aux_ready": false,
+    "probe_phase": "READ_PUBLIC_REGISTERS",
+    "settings_query_sent": true,
+    "settings_response_bytes": 0,
+    "settings_read_attempts": 3,
+    "uart_peripheral": 1,
+    "uart_actual_baud": 0,
+    "settings_response_hex": "",
+    "pin_levels": {
+      "initialized_by_probe": true,
+      "rx_gpio": 32,
+      "tx_gpio": 33,
+      "aux_gpio": 27,
+      "m0_gpio": 25,
+      "m1_gpio": 26,
+      "aux_high": true,
+      "m0_high": true,
+      "m1_high": true
+    },
+    "tx_pending": false,
+    "tx_uart_fragments": 0,
+    "rx_messages": 0,
+    "rejected": 0,
+    "auth_failures": 0,
+    "timeouts": 2,
+    "reassembly_expired": 0,
+    "reassembly_duplicates": 0,
+    "completed_uart_transfers": 0,
+    "rssi_dbm": null,
+    "snr_db": null
+  },
+  "mqtt_after_reboot": {
+    "state": "connected",
+    "tls_state": "VERIFIED",
+    "subscription_state": "READY"
+  },
+  "ina219": {
+    "sensor_type": "INA219",
+    "sensor_id": "ESP32-10777D842178-INA219",
+    "valid": false,
+    "simulated": false,
+    "status": "READ_ERROR",
+    "sampled_uptime_ms": 137678,
+    "sampling_interval_seconds": 2,
+    "parameters": {},
+    "units": {
+      "bus_voltage": "V",
+      "shunt_voltage": "mV"
+    },
+    "current_calibrated": false,
+    "shunt_resistance_configured": true,
+    "shunt_milliohms": 100
+  }
+}

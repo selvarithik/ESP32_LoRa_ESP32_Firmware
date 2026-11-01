@@ -15,3 +15,7 @@ include/local_wifi_credentials.h
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+node_modules/
+*.sgwportable
+*transfer.key

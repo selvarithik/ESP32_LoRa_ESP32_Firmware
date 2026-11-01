@@ -1,0 +1,90 @@
+{
+  "device_id": "ESP32-10777D842178",
+  "port": "COM8",
+  "first_result": {
+    "ok": false,
+    "code": "UART_RX_DATA_MISMATCH",
+    "sent_bytes": 16,
+    "received_bytes": 16
+  },
+  "repeat_results": [
+    {
+      "ok": true,
+      "code": "UART_LOOPBACK_PASS_RADIO_NOT_TESTED",
+      "sent_bytes": 16,
+      "received_bytes": 16,
+      "elapsed_ms": 250,
+      "rx_gpio": 16,
+      "tx_gpio": 17,
+      "baud": 9600
+    },
+    {
+      "ok": true,
+      "code": "UART_LOOPBACK_PASS_RADIO_NOT_TESTED",
+      "sent_bytes": 16,
+      "received_bytes": 16,
+      "elapsed_ms": 250,
+      "rx_gpio": 16,
+      "tx_gpio": 17,
+      "baud": 9600
+    }
+  ],
+  "e220_isolation": "User responded COM8 to isolation preparation prompt; no independent physical inspection",
+  "radio_rf_delivery": "NOT_TESTED",
+  "preserved": {
+    "role": true,
+    "dht_enabled": true,
+    "dht_pin": true,
+    "ina219_enabled": true,
+    "mq135_enabled": true
+  },
+  "mqtt_fingerprint_unchanged": true,
+  "mqtt_revision_unchanged": true,
+  "upload": {
+    "port": "COM8",
+    "device_id": "ESP32-10777D842178",
+    "flash_bytes": 4194304,
+    "backup_sha256": "a2edd9b6632173ae6d28e02338afbd4dbdaf3b7345d45e8494936d51c08707a3",
+    "full_backup_verified": true,
+    "backup_encrypted": true,
+    "physical_upload": true,
+    "application_offset": 65536,
+    "application_capacity": 3145728,
+    "application_label": "app0",
+    "partition_matches_built_huge_app": true,
+    "partition_md5_valid": true,
+    "boot_metadata_repair_required": false,
+    "full_flash_verification_method": "DEVICE_MD5_EXPECTED_IMAGE",
+    "application_bytes": 1373632,
+    "application_sha256": "b5b7faa15f034d814da3065d68289017a553aee7b5f31e640e0a573adcc98238",
+    "application_readback_verified": false,
+    "application_verified": true,
+    "all_bytes_outside_application_unchanged": true,
+    "nvs_ota_partitions_bootloader_preserved": true,
+    "filesystem_preserved": true,
+    "reset_requested": true
+  },
+  "ina219_after_test": {
+    "valid": false,
+    "status": "READ_ERROR",
+    "parameters": {}
+  },
+  "negative_control": {
+    "preparation": "Owner replied check COM8 to jumper-removal prompt; no independent physical inspection",
+    "observed_runs": [
+      {
+        "sent_bytes": 16,
+        "received_bytes": 1,
+        "result": "UART_RX_LENGTH_MISMATCH"
+      },
+      {
+        "sent_bytes": 16,
+        "received_bytes": 1,
+        "result": "UART_RX_LENGTH_MISMATCH"
+      }
+    ],
+    "third_request": "USB_RESPONSE_UNAVAILABLE; outcome unknown; no mutation retry",
+    "interpretation": "No complete 16-byte echo in the two observed open-input runs; strict zero-byte negative control did not pass. Floating/unbiased RX or noise is possible, not proven."
+  },
+  "latest_port_observation": "COM8 disappeared after requesting owner power-off for negative control"
+}

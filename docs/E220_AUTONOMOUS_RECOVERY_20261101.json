@@ -1,0 +1,142 @@
+{
+  "version": "1.1.6-e220-recovery",
+  "device_id": "ESP32-10777D842178",
+  "master_port": "COM8",
+  "slave_port": "COM11",
+  "normal_uart_probe": {
+    "uart": 2,
+    "actual_baud_during_probe": 9600,
+    "attempts": 3,
+    "result": "SETTINGS_PARTIAL_RESPONSE",
+    "last_response_hex": "F9FF"
+  },
+  "alternative_uart_probe": {
+    "uart": 1,
+    "actual_baud_during_probe": 9600,
+    "attempts": 3,
+    "result": "SETTINGS_PARTIAL_RESPONSE",
+    "last_response_hex": "7E",
+    "saved_uart_not_changed": true
+  },
+  "slave_public_settings_read": true,
+  "master_final_radio": {
+    "state": "ERROR",
+    "error": "SETTINGS_PARTIAL_RESPONSE",
+    "module": "E220-900T22D",
+    "hardware_link_verified": false,
+    "public_settings_read": false,
+    "register_writes": 0,
+    "work_mode": "NORMAL",
+    "sleeping": false,
+    "wor_cycle_ms": 2000,
+    "aux_ready": false,
+    "probe_phase": "READ_PUBLIC_REGISTERS",
+    "settings_query_sent": true,
+    "settings_response_bytes": 1,
+    "settings_read_attempts": 3,
+    "uart_peripheral": 1,
+    "uart_actual_baud": 0,
+    "settings_response_hex": "7E",
+    "pin_levels": {
+      "initialized_by_probe": true,
+      "aux_gpio": 27,
+      "m0_gpio": 25,
+      "m1_gpio": 26,
+      "aux_high": true,
+      "m0_high": true,
+      "m1_high": true
+    },
+    "tx_pending": false,
+    "tx_uart_fragments": 0,
+    "rx_messages": 0,
+    "rejected": 0,
+    "auth_failures": 0,
+    "timeouts": 2,
+    "reassembly_expired": 0,
+    "reassembly_duplicates": 0,
+    "completed_uart_transfers": 0,
+    "rssi_dbm": null,
+    "snr_db": null
+  },
+  "preserved": {
+    "role": true,
+    "dht_enabled": true,
+    "dht_pin": true,
+    "ina219_enabled": true,
+    "mq135_enabled": true,
+    "mqtt_profile_fingerprint": true,
+    "mqtt_revision": true
+  },
+  "mqtt_runtime": {
+    "state": "connected",
+    "tls_state": "VERIFIED",
+    "authentication_state": "ACCEPTED",
+    "subscription_state": "READY",
+    "status_label": "CONNECTED",
+    "pubacks": 17
+  },
+  "station_ip": "192.168.1.106",
+  "ina219": {
+    "sensor_type": "INA219",
+    "sensor_id": "ESP32-10777D842178-INA219",
+    "valid": false,
+    "simulated": false,
+    "status": "READ_ERROR",
+    "sampled_uptime_ms": 134059,
+    "sampling_interval_seconds": 2,
+    "parameters": {},
+    "units": {
+      "bus_voltage": "V",
+      "shunt_voltage": "mV"
+    },
+    "current_calibrated": false,
+    "shunt_resistance_configured": true,
+    "shunt_milliohms": 100
+  },
+  "rf_delivery": "NOT_TESTED_MASTER_REGISTER_READ_NOT_VALID",
+  "build": {
+    "program_bytes": 1368109,
+    "application_capacity": 3145728,
+    "static_ram_bytes": 76140,
+    "ram_capacity": 327680
+  },
+  "software_checks": {
+    "e220_stream_and_existing_native_tests": "PASS_MASTER_AND_SLAVE",
+    "contract": "PASS_IDENTICAL_98_SETTINGS",
+    "flash_layout_unit_tests": "8_PASS"
+  },
+  "deployment": {
+    "port": "COM8",
+    "device_id": "ESP32-10777D842178",
+    "flash_bytes": 4194304,
+    "backup_sha256": "f76e2e432c5b2dd80aef49a776dd52ca7dbc4537705eb61adb0a206c0ccae8f8",
+    "full_backup_verified": true,
+    "backup_encrypted": true,
+    "physical_upload": true,
+    "application_offset": 65536,
+    "application_capacity": 3145728,
+    "application_label": "app0",
+    "partition_matches_built_huge_app": true,
+    "partition_md5_valid": true,
+    "boot_metadata_repair_required": false,
+    "full_flash_verification_method": "DEVICE_MD5_EXPECTED_IMAGE",
+    "application_bytes": 1374816,
+    "application_sha256": "3f2da931418494df5df5b1b8b77720580e13b13a6afcd22695aeb4b4e70da1fa",
+    "application_readback_verified": false,
+    "application_verified": true,
+    "all_bytes_outside_application_unchanged": true,
+    "nvs_ota_partitions_bootloader_preserved": true,
+    "filesystem_preserved": true,
+    "reset_requested": true
+  },
+  "mqtt_recovery_samples": [
+    {
+      "state": "connected",
+      "tls_state": "VERIFIED",
+      "authentication_state": "ACCEPTED",
+      "subscription_state": "READY",
+      "status_label": "CONNECTED",
+      "pubacks": 17
+    }
+  ]
+}

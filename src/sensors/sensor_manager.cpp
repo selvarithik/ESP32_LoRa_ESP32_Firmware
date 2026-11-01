@@ -40,7 +40,7 @@ String SensorManager::telemetryJson(unsigned index)const{
     JsonDocument d;const char* type=index==1?"INA219":index==2?"MQ135":"DHT11";d["sensor_type"]=type;d["sensor_id"]=configManager.get().device_id+"-"+type;
     bool enabled=index==1?inaEnabled:index==2?mqEnabled:dhtEnabled;bool fresh=latest.sampled&&millis()-latest.sampled<10000;
     bool good=enabled&&fresh&&(index==1?latest.ina:index==2?latest.mq:latest.dht);
-    if(!HardwareProfile::roleMatches(configManager.get().role==DeviceRole::MASTER))d["disabled_reason"]="BUILD_ROLE_MISMATCH";else if(index==1&&!HardwareProfile::inaAllowed(configManager.get().role==DeviceRole::MASTER))d["disabled_reason"]="SLAVE_INA219_INHIBITED";d["valid"]=good;d["simulated"]=false;d["status"]=!enabled?"NOT_CONFIGURED":!readings?"TASK_UNAVAILABLE":!latest.sampled?"WAITING":!good?"READ_ERROR":index==2?"UNCALIBRATED_RAW_ONLY":"OK";
+    if(!HardwareProfile::roleMatches(configManager.get().role==DeviceRole::MASTER))d["disabled_reason"]="BUILD_ROLE_MISMATCH";d["valid"]=good;d["simulated"]=false;d["status"]=!enabled?"NOT_CONFIGURED":!readings?"TASK_UNAVAILABLE":!latest.sampled?"WAITING":!good?"READ_ERROR":index==2?"UNCALIBRATED_RAW_ONLY":"OK";
     d["sampled_uptime_ms"]=enabled?latest.sampled:0;d["sampling_interval_seconds"]=2;
     auto p=d["parameters"].to<JsonObject>();auto u=d["units"].to<JsonObject>();
     if(index==0){d["capture_method"]=latest.dhtPolling?"PULSE_POLLING":"RMT";d["last_success_uptime_ms"]=latest.lastGood;d["capture_status"]=DhtPulseCore::name(latest.dhtResult);d["capture_pulses"]=latest.dhtPulses;d["data_idle_high"]=latest.dhtIdleHigh;u["temperature"]="C";u["humidity"]="%RH";if(good){p["temperature"]=latest.t;p["humidity"]=latest.h;}}

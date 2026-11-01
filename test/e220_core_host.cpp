@@ -6,11 +6,26 @@
 #include <algorithm>
 #include <random>
 int main(){
+ assert(HardwareProfile::radioUartPins(true,16,17));assert(HardwareProfile::radioUartPins(false,16,17));
+ assert(HardwareProfile::radioUartPins(true,32,33));assert(!HardwareProfile::radioUartPins(false,32,33));
+ assert(!HardwareProfile::radioUartPins(true,33,32));assert(!HardwareProfile::radioUartPins(true,3,1));
+ assert(!HardwareProfile::radioUartPins(true,16,33));assert(!HardwareProfile::radioUartPins(true,-1,33));
+
+ { // Noisy, partial and invalid public register replies cannot create fake settings.
+  const uint8_t valid[]={0xc1,0,6,0,0,0x62,0,18,3};E220Core::SettingsReader reader;E220Core::Settings decoded;
+  for(unsigned i=0;i<8;++i)assert(!reader.add(valid[i],decoded));assert(reader.add(valid[8],decoded));assert(decoded.channel==18);
+  reader.reset();for(uint8_t byte:{0xff,0xff,0xff,0xc1,0xc1})assert(!reader.add(byte,decoded));
+  bool done=false;for(uint8_t byte:valid)done=reader.add(byte,decoded);assert(done&&reader.total==14);
+  reader.reset();uint8_t invalid[9];memcpy(invalid,valid,9);invalid[7]=81;
+  for(uint8_t byte:invalid)assert(!reader.add(byte,decoded));for(uint8_t byte:valid)done=reader.add(byte,decoded);assert(done);
+  reader.reset();for(unsigned i=0;i<10000;++i)assert(!reader.add(0xff,decoded));assert(reader.length==9&&reader.total==10000);
+ }
+
  assert(!HardwareProfile::DisplayPresent);assert(HardwareProfile::Dht==4&&HardwareProfile::Mq135==34&&HardwareProfile::InaSda==21&&HardwareProfile::InaScl==22);
 #ifdef DEVICE_ROLE_MASTER
- assert(HardwareProfile::Master&&HardwareProfile::inaAllowed(true)&&!HardwareProfile::inaAllowed(false));
+ assert(HardwareProfile::Master&&HardwareProfile::inaAllowed(true)&&HardwareProfile::inaAllowed(false));
 #else
- assert(!HardwareProfile::Master&&!HardwareProfile::inaAllowed(false));
+ assert(!HardwareProfile::Master&&HardwareProfile::inaAllowed(false));
 #endif
  assert(HardwareProfile::roleMatches(true)&&HardwareProfile::roleMatches(false));
  uint8_t registers[]={0xc1,0,6,0x12,0x34,0x62,0,23,0};E220Core::Settings settings;assert(E220Core::settings(registers,9,settings));assert(settings.address==0x1234&&settings.baud==9600&&settings.packet==200&&settings.channel==23&&settings.airRate==2&&settings.power==22&&!settings.fixed);
@@ -28,5 +43,5 @@ int main(){
  E220Core::Routes routes;assert(routes.observe("ESP32-010203040506","ESP32-060504030201",1,0));assert(routes.find("ESP32-010203040506",59999,60000));assert(!routes.find("ESP32-010203040506",60001,60000));routes.expire(60001,60000);assert(!routes.rows[0].destination[0]);assert(!routes.observe("bad id","peer",1,0));
  assert(E220Core::forwardAllowed(3,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(1,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,4,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,1,4,"RADIO:same","RADIO:same"));
  assert(routes.observe("target","direct",1,0));assert(routes.observe("target","relay",2,1));assert(!strcmp(routes.find("target",2,60000)->nextHop,"direct"));
- puts("PASS production E220 settings, COBS 500 vectors, all subpacket sizes, reassembly, duplicates, bounds, expiry, routes and role safety");
+ puts("PASS production E220 settings/stream resync, COBS 500 vectors, all subpacket sizes, reassembly, duplicates, bounds, expiry, routes and role safety");
 }

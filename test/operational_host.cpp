@@ -9,6 +9,7 @@ class String {std::string v;public:String()=default;String(const char*s):v(s?s:"
 #define ARDUINOJSON_ENABLE_ARDUINO_STRING 1
 #include <ArduinoJson.h>
 #include "../src/command/operation_rules.h"
+#include "../src/communication/runtime_ip_backup_core.h"
 uint32_t hostNow=100;time_t hostUtc=1800000000;
 uint32_t millis(){return hostNow;}time_t hostTime(time_t*){return hostUtc;}
 #define time hostTime
@@ -18,7 +19,7 @@ struct{String snapshot="{\"transaction\":{\"state\":\"IDLE\"}}";String status(bo
 namespace TransportSwitch{bool locked=false;bool busy(){return locked;}}
 struct{bool drain=false,manual=false;bool draining(){return drain;}bool requestSleep(uint32_t,const String&,String&e){if(drain){e="POWER_BUSY";return false;}manual=true;return true;}bool cancelPendingSleep(String&e){if(!manual){e="NO_CANCELLABLE_PENDING_SLEEP";return false;}manual=false;return true;}}powerManager;
 struct{bool up=true;unsigned attempts=0;bool connect(const String&,const String&,unsigned){++attempts;return true;}bool isConnected(){return up;}}wifiManager;
-struct{bool local=true,connected=true;bool localMode(){return local;}bool gatewayConnected(){return connected;}}transportManager;
+struct{bool local=true,connected=true;uint32_t ipBackupRemaining()const{return backup;}unsigned backup=0;bool localMode(){return local;}bool gatewayConnected(){return connected;}}transportManager;
 struct{bool initialized=false,probe=false,allowed=true;String snapshot="{\"state\":\"INSPECTING\"}";bool isInitialized(){return initialized;}bool requestProbe(bool ro){assert(ro);probe=allowed;return allowed;}String statusJson(){return snapshot;}}loraTransport;
 struct{bool ready=false;String snapshot="{\"state\":\"SCANNING\"}";bool requestI2cScan(){return ready;}String i2cScanJson(){return snapshot;}}sensorManager;
 enum class PacketType{STATUS,HELLO,RESPONSE};struct Message{String messageId="CMD-1",source="GATEWAY",payload="{}",destination,correlationId;uint32_t timestamp=1800000000;String toJson()const{JsonDocument d;d["payload"]=payload;String out;serializeJson(d,out);return out;}};
@@ -30,9 +31,16 @@ struct Cached{String source,id,request,response,responseId;uint32_t seen=0;bool 
 #include "../src/core/operational_runtime.inc"
 JsonDocument args,output;String result;bool deferred=false;
 bool start(const char*name,const char*json="{}",const char*channel="IP",bool gateway=true){args.clear();assert(!deserializeJson(args,json));result="";return startOperation(Message{},name,args.as<JsonObjectConst>(),result,deferred,gateway,channel);}
-void reset(){operationJob=OperationJob{};mqttRestoreAt=0;mqttRestoreArmed=false;hostNow=100;hostUtc=1800000000;packetSeq=0;emitted=Message{};emitted.payload="{}";configManager.c=Config{};TransportSwitch::locked=false;powerManager.drain=false;powerManager.manual=false;loraTransport.initialized=false;loraTransport.allowed=true;loraTransport.snapshot="{\"state\":\"INSPECTING\"}";sensorManager.ready=false;CanonicalMqtt::up=true;CanonicalMqtt::enabled=true;CanonicalMqtt::state="connected";CanonicalMqtt::recycles=0;CanonicalMqtt::reconnect=false;CanonicalMqtt::publishOk=true;transportManager.local=true;transportManager.connected=true;for(auto&p:peers)p=Peer{};for(auto&c:cache)c=Cached{};}
+void reset(){operationJob=OperationJob{};mqttRestoreAt=0;mqttRestoreArmed=false;hostNow=100;hostUtc=1800000000;packetSeq=0;emitted=Message{};emitted.payload="{}";configManager.c=Config{};TransportSwitch::locked=false;powerManager.drain=false;powerManager.manual=false;loraTransport.initialized=false;loraTransport.allowed=true;loraTransport.snapshot="{\"state\":\"INSPECTING\"}";sensorManager.ready=false;CanonicalMqtt::up=true;CanonicalMqtt::enabled=true;CanonicalMqtt::state="connected";CanonicalMqtt::recycles=0;CanonicalMqtt::reconnect=false;CanonicalMqtt::publishOk=true;transportManager.local=true;transportManager.connected=true;transportManager.backup=0;for(auto&p:peers)p=Peer{};for(auto&c:cache)c=Cached{};}
 void tick(unsigned ms=101){hostNow+=ms;pollOperation();}bool responseOk(){output.clear();assert(!deserializeJson(output,emitted.payload));return output["status"]=="SUCCESS";}
 int main(){
+ assert(RuntimeIpBackupCore::remaining(0xfffffff0,0,true)==1);
+ assert(RuntimeIpBackupCore::remaining(1,0,true)==0);
+ assert(RuntimeIpBackupCore::remaining(0,100,false)==0);
+ assert(RuntimeIpBackupCore::duration(30)&&RuntimeIpBackupCore::duration(180)&&!RuntimeIpBackupCore::duration(181));
+ reset();transportManager.connected=false;assert(!start("MQTT_RECONNECT"));
+ reset();transportManager.backup=15;assert(!start("MQTT_DISCONNECT","{\"restore_after_seconds\":10}"));assert(!mqttRestoreArmed);
+
  reset();mqttStaging.snapshot="{\"transaction\":{\"state\":\"COMMITTING\"}}";assert(!start("MQTT_CONNECT"));mqttStaging.snapshot="{\"transaction\":{\"state\":\"IDLE\"}}";assert(!start("MQTT_CONNECT","{}","IP",false));assert(!operationJob.active);
  assert(start("SYNC_TIME","{\"unix_time\":1800000010}"));assert(hostUtc==1800000010);assert(!start("SYNC_TIME","{\"unix_time\":1800001000}"));
  reset();wifiManager.attempts=0;assert(start("WIFI_RECONNECT","{}","MQTT"));tick();assert(wifiManager.attempts==0);operationJob.acceptance=true;tick();assert(wifiManager.attempts==1&&operationJob.active);++CanonicalMqtt::recycles;tick();assert(responseOk()&&!operationJob.active);

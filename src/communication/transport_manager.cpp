@@ -14,12 +14,17 @@
 #include "local_ip_core.h"
 #include "ip_network.h"
 #include "http_body_core.h"
+#include "runtime_ip_backup_core.h"
 #include "../config/strict_json.h"
 #include <sys/time.h>
 
 TransportManager transportManager;
 namespace {
 struct Frame { char raw[MAX_FRAME_BYTES+1];char host[254];bool gateway; };
+struct BackupControl {char host[16];uint16_t port;uint32_t seconds;};
+QueueHandle_t backupControls=nullptr;
+std::atomic<uint32_t> backupDeadline{0};std::atomic<bool> backupArmed{false};
+char backupHost[16]{};uint16_t backupPort=0;
 struct Result {char id[49];bool success;bool gateway;int error;};
 QueueHandle_t outgoing=nullptr,incoming=nullptr,results=nullptr;TaskHandle_t workerTask=nullptr;
 DeviceConfig settings;String initialMqttProfile;uint32_t initialSharedRevision=0;
@@ -82,7 +87,8 @@ bool localRequest(const Frame& f){
  if(key.length()<32){networkError=-1101;localState=3;return false;}
  WiFiClient plain;WiFiClientSecure secure;HTTPClient http;bool useTls=f.gateway&&settings.server_https;
  if(useTls)secure.setCACert(settings.gateway_ca.c_str());
- String base=String(useTls?"https://":"http://")+f.host+":"+String(f.gateway?settings.server_port:80);
+ bool backup=f.gateway&&transportManager.ipBackupRemaining()>0;
+ String base=String(useTls?"https://":"http://")+(backup?String(backupHost):String(f.host))+":"+String(f.gateway?(backup?backupPort:settings.server_port):80);
  String path=f.gateway?"/api/v1/device/local-":"/api/v1/local/";
  http.setConnectTimeout(settings.command_timeout_ms);http.setTimeout(settings.command_timeout_ms);http.setReuse(false);
  localState=1;
@@ -117,9 +123,21 @@ void worker(void*) {
     uint32_t lastProbe=millis()-60000;bool timeStarted=false,mqttStarted=false;
     for(;;) {
         if(pauseRequest){if(!pauseAck){lastGateway=0;lastMaster=0;}CanonicalMqtt::requestEnabled(false);CanonicalMqtt::loop();mqttUp=false;pauseAck=true;vTaskDelay(pdMS_TO_TICKS(20));continue;}
+        if(pauseAck)CanonicalMqtt::requestEnabled(!settings.local_ip_enabled&&settings.role==DeviceRole::MASTER);
         pauseAck=false;
-        if(settings.local_ip_enabled!=wantedLocal.load()){settings.local_ip_enabled=wantedLocal.load();activeLocal=settings.local_ip_enabled;lastGateway=0;lastOk=0;}
-        CanonicalMqtt::requestEnabled(!settings.local_ip_enabled&&settings.role==DeviceRole::MASTER);
+        BackupControl control{};
+        if(backupControls&&xQueueReceive(backupControls,&control,0)==pdTRUE){
+            strlcpy(backupHost,control.host,sizeof(backupHost));backupPort=control.port;
+            backupDeadline=millis()+control.seconds*1000U;backupArmed=control.seconds>0;
+        }
+        bool backup=transportManager.ipBackupRemaining()>0;
+        bool effectiveLocal=wantedLocal.load()||backup;
+        if(settings.local_ip_enabled!=effectiveLocal){
+            settings.local_ip_enabled=effectiveLocal;activeLocal=effectiveLocal;lastGateway=0;lastOk=0;
+            // A bounded USB backup keeps the existing MQTT runtime available.
+            // Apply policy at mode changes only; do not undo command requests.
+            if(!backup)CanonicalMqtt::requestEnabled(!effectiveLocal&&settings.role==DeviceRole::MASTER);
+        }
         bool wifi=IpNetwork::available();
         if(!settings.local_ip_enabled&&wifi&&!timeStarted&&(!initialMqttProfile.isEmpty()||settings.server_https||settings.mqtt_tls||(!settings.internet_probe_host.isEmpty()&&settings.internet_probe_tls))){configTime(0,0,"pool.ntp.org");timeStarted=true;}
         if(!settings.local_ip_enabled&&wifi&&!settings.internet_probe_host.isEmpty()&&millis()-lastProbe>=60000) {
@@ -129,7 +147,7 @@ void worker(void*) {
             probe.setConnectTimeout(1500);probe.setTimeout(1500);
             if(probe.begin(settings.internet_probe_tls?static_cast<WiFiClient&>(probeTls):probePlain,url)) {probeCode=probe.sendRequest("HEAD");probeAt=millis();probe.end();}
         }
-        if(!settings.local_ip_enabled&&wifi&&!mqttStarted&&time(nullptr)>1700000000){CanonicalMqtt::begin(initialMqttProfile,initialSharedRevision);initialMqttProfile="";mqttStarted=true;}
+        if(wifi&&!mqttStarted&&time(nullptr)>1700000000){CanonicalMqtt::begin(initialMqttProfile,initialSharedRevision);initialMqttProfile="";mqttStarted=true;}
         CanonicalMqtt::loop();mqttUp=CanonicalMqtt::connected();
         Frame* received=nullptr;
         if(xQueueReceive(outgoing,&received,pdMS_TO_TICKS(20))!=pdTRUE)continue;
@@ -153,8 +171,8 @@ void worker(void*) {
 void TransportManager::begin() {
     settings=configManager.get();wantedLocal=settings.local_ip_enabled;activeLocal=settings.local_ip_enabled;initialMqttProfile=mqttStaging.active();initialSharedRevision=mqttStaging.sharedRevision();
     CanonicalMqtt::requestEnabled(!settings.local_ip_enabled && settings.role==DeviceRole::MASTER);
-    outgoing=xQueueCreate(6,sizeof(Frame*));incoming=xQueueCreate(6,sizeof(Frame*));results=xQueueCreate(8,sizeof(Result));
-    if(!outgoing||!incoming||!results){++overflows;return;}
+    backupControls=xQueueCreate(1,sizeof(BackupControl));outgoing=xQueueCreate(6,sizeof(Frame*));incoming=xQueueCreate(6,sizeof(Frame*));results=xQueueCreate(8,sizeof(Result));
+    if(!backupControls||!outgoing||!incoming||!results){++overflows;return;}
     if(xTaskCreate(worker,"network",8192,nullptr,1,&workerTask)!=pdPASS)++overflows;
 }
 void TransportManager::loop() {loraTransport.loop();String id;bool ok;if(loraTransport.delivery(id,ok)&&results){Result result{};strlcpy(result.id,id.c_str(),sizeof(result.id));result.success=ok;result.gateway=false;xQueueSend(results,&result,0);}}
@@ -185,6 +203,14 @@ bool TransportManager::mqttConnected() const{return mqttUp;}
 uint32_t TransportManager::lastSuccess() const{return lastOk;}
 uint32_t TransportManager::dropped() const{return overflows;}
 void TransportManager::gatewayReceipt(){lastGateway=millis();lastOk=millis();++receiptCount;}
+bool TransportManager::requestIpBackup(const String& host,uint16_t port,uint32_t seconds){
+    IPAddress address;
+    if(!backupControls||configManager.get().role!=DeviceRole::MASTER||wantedLocal||(!seconds&&ipBackupRemaining()==0))return false;
+    if(seconds&&(!RuntimeIpBackupCore::duration(seconds)||port<1024||!address.fromString(host)||!((address[0]==10)||(address[0]==172&&address[1]>=16&&address[1]<=31)||(address[0]==192&&address[1]==168))))return false;
+    BackupControl control{};strlcpy(control.host,host.c_str(),sizeof(control.host));control.port=port;control.seconds=seconds;
+    return xQueueSend(backupControls,&control,0)==pdTRUE;
+}
+uint32_t TransportManager::ipBackupRemaining()const{return RuntimeIpBackupCore::remaining(millis(),backupDeadline.load(),backupArmed.load());}
 void TransportManager::requestLocalMode(bool value){wantedLocal=value;}
 bool TransportManager::localMode()const{return activeLocal;}
 void TransportManager::pause(bool value){pauseRequest=value;}
@@ -198,7 +224,7 @@ String TransportManager::internetStatus() const {
     int code=probeCode;return code<=0?"PROBE_UNREACHABLE":code>=200&&code<400?"REACHABLE":"REMOTE_SERVICE_UNAVAILABLE";
 }
 String TransportManager::localStatus() const {
- JsonDocument d;d["enabled"]=settings.local_ip_enabled;d["credential_configured"]=LocalIpCore::credential(settings.role==DeviceRole::MASTER,settings.routing_policy.c_str(),settings.local_ip_token.length()>=32||settings.gateway_token.length()>=32,settings.mesh_key.length()>=32);d["interface"]=IpNetwork::name();d["local_ip"]=IpNetwork::address().toString();d["gateway_host"]=settings.server_host;d["gateway_port"]=settings.server_port;d["routing_policy"]=settings.routing_policy;d["last_success_uptime_ms"]=lastOk.load();d["last_error"]=networkError.load();d["successful_exchanges"]=successes.load();d["failed_exchanges"]=failures.load();d["last_failure_stage"]=failureStage.load();d["last_failure_code"]=failureCode.load();d["last_inbound_error"]=inboundError();d["inbound_queued"]=incoming?uxQueueMessagesWaiting(incoming):0;d["queue_drops"]=overflows.load();
+ JsonDocument d;d["backup_remaining_seconds"]=ipBackupRemaining();d["saved_enabled"]=configManager.get().local_ip_enabled;d["enabled"]=settings.local_ip_enabled;d["credential_configured"]=LocalIpCore::credential(settings.role==DeviceRole::MASTER,settings.routing_policy.c_str(),settings.local_ip_token.length()>=32||settings.gateway_token.length()>=32,settings.mesh_key.length()>=32);d["interface"]=IpNetwork::name();d["local_ip"]=IpNetwork::address().toString();d["gateway_host"]=settings.server_host;d["gateway_port"]=settings.server_port;d["routing_policy"]=settings.routing_policy;d["last_success_uptime_ms"]=lastOk.load();d["last_error"]=networkError.load();d["successful_exchanges"]=successes.load();d["failed_exchanges"]=failures.load();d["last_failure_stage"]=failureStage.load();d["last_failure_code"]=failureCode.load();d["last_inbound_error"]=inboundError();d["inbound_queued"]=incoming?uxQueueMessagesWaiting(incoming):0;d["queue_drops"]=overflows.load();
  int state=localState.load();d["state"]=LocalIpCore::state(settings.local_ip_enabled,IpNetwork::available(),state,millis(),lastOk.load());d["exchange_in_progress"]=sending.load();d["ethernet"]= "NOT_AVAILABLE";d["security"]="HMAC_SHA256_CHALLENGE_RESPONSE";String raw;serializeJson(d,raw);return raw;
 }
 

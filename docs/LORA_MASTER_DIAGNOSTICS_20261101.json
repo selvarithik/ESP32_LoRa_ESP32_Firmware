@@ -1,0 +1,152 @@
+{
+  "date": "2026-11-01",
+  "firmware": "1.1.4-radio-diag2",
+  "master_application_updated": true,
+  "slave_firmware_unchanged": true,
+  "master_public_uart_replies": [
+    "FC40F0",
+    "0E06"
+  ],
+  "rf_delivery": "NOT_TESTED_MASTER_PUBLIC_REGISTER_READ_INVALID",
+  "build": {
+    "program_bytes": 1364457,
+    "application_capacity": 3145728,
+    "static_ram_bytes": 76036
+  },
+  "checks": {
+    "contract": "PASS",
+    "native_e220_master_and_slave": "PASS",
+    "flash_layout_unit_tests": "8 PASS"
+  },
+  "devices": {
+    "COM8": {
+      "device_id": "ESP32-10777D842178",
+      "role": "MASTER",
+      "radio": {
+        "state": "ERROR",
+        "error": "SETTINGS_PARTIAL_RESPONSE",
+        "module": "E220-900T22D",
+        "hardware_link_verified": false,
+        "public_settings_read": false,
+        "register_writes": 0,
+        "work_mode": "NORMAL",
+        "sleeping": false,
+        "wor_cycle_ms": 2000,
+        "aux_ready": false,
+        "probe_phase": "READ_PUBLIC_REGISTERS",
+        "settings_query_sent": true,
+        "settings_response_bytes": 2,
+        "settings_response_hex": "0E06",
+        "pin_levels": {
+          "initialized_by_probe": true,
+          "aux_gpio": 27,
+          "m0_gpio": 25,
+          "m1_gpio": 26,
+          "aux_high": false,
+          "m0_high": true,
+          "m1_high": true
+        },
+        "tx_pending": false,
+        "tx_uart_fragments": 0,
+        "rx_messages": 0,
+        "rejected": 0,
+        "auth_failures": 0,
+        "timeouts": 2,
+        "reassembly_expired": 0,
+        "reassembly_duplicates": 0,
+        "completed_uart_transfers": 0,
+        "rssi_dbm": null,
+        "snr_db": null
+      },
+      "preserved": {
+        "role": true,
+        "dht_enabled": true,
+        "dht_pin": true,
+        "ina219_enabled": true,
+        "mq135_enabled": true,
+        "mqtt_fingerprint": true,
+        "mqtt_revision": true
+      }
+    },
+    "COM11": {
+      "device_id": "ESP32-842F2AE81F84",
+      "role": "NODE",
+      "radio": {
+        "state": "ERROR",
+        "error": "PROBE_COMPLETE_NO_RF",
+        "module": "E220-900T22D",
+        "hardware_link_verified": false,
+        "public_settings_read": true,
+        "register_writes": 0,
+        "work_mode": "NORMAL",
+        "sleeping": false,
+        "wor_cycle_ms": 2000,
+        "aux_ready": false,
+        "tx_pending": false,
+        "tx_uart_fragments": 0,
+        "rx_messages": 0,
+        "rejected": 0,
+        "auth_failures": 0,
+        "timeouts": 0,
+        "reassembly_expired": 0,
+        "reassembly_duplicates": 0,
+        "completed_uart_transfers": 0,
+        "rssi_dbm": null,
+        "snr_db": null,
+        "observed": {
+          "address": 0,
+          "baud": 9600,
+          "channel": 18,
+          "air_rate_code": 2,
+          "power_dbm": 22,
+          "subpacket_bytes": 200,
+          "wor_cycle_ms": 2000,
+          "fixed_mode": false,
+          "rssi_enabled": false,
+          "lbt": false
+        }
+      },
+      "preserved": {
+        "role": true,
+        "dht_enabled": true,
+        "dht_pin": true,
+        "ina219_enabled": true,
+        "mq135_enabled": true,
+        "mqtt_fingerprint": true,
+        "mqtt_revision": true
+      }
+    }
+  },
+  "upload_verification": {
+    "port": "COM8",
+    "device_id": "ESP32-10777D842178",
+    "flash_bytes": 4194304,
+    "backup_sha256": "06b4cd4d426b77aae8e6b501c89ae836f7d573b4122c7681e897074d946d0e6a",
+    "full_backup_verified": true,
+    "backup_encrypted": true,
+    "physical_upload": true,
+    "application_offset": 65536,
+    "application_capacity": 3145728,
+    "application_label": "app0",
+    "partition_matches_built_huge_app": true,
+    "partition_md5_valid": true,
+    "boot_metadata_repair_required": false,
+    "full_flash_verification_method": "DEVICE_MD5_EXPECTED_IMAGE",
+    "application_bytes": 1371168,
+    "application_sha256": "2b8d293d12f94b95dc1c1fc2a09f343f8f42065c0ce7d60d19dabc55c7bf4303",
+    "application_readback_verified": false,
+    "application_verified": true,
+    "all_bytes_outside_application_unchanged": true,
+    "nvs_ota_partitions_bootloader_preserved": true,
+    "filesystem_preserved": true,
+    "reset_requested": true
+  },
+  "master_after_clock_restore": {
+    "station_ip": "192.168.1.106",
+    "state": "connected",
+    "tls_state": "VERIFIED",
+    "subscription_state": "READY",
+    "clock_restored_over_physical_usb": true,
+    "saved_configuration_changes": false
+  }
+}

@@ -1,6 +1,6 @@
 // UI behavior with mocked HTTP. Does not exercise physical NVS or ESP32 handlers.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
-const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'C:/Users/Admin/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
 const html=fs.readFileSync(path.join(__dirname,'../src/web/access_page.h'),'utf8').match(/R"ACCESS\(([\s\S]*?)\)ACCESS"/)[1];
 (async()=>{const browser=await chromium.launch({channel:'msedge',headless:true});try{for(const width of [360,1280]){
  const context=await browser.newContext({viewport:{width,height:900}}),page=await context.newPage();

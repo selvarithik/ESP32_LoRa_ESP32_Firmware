@@ -4,6 +4,7 @@
 class TransportManager {
 public:
     void begin();
+    bool requestIpBackup(const String& host,uint16_t port,uint32_t seconds);uint32_t ipBackupRemaining()const;
     void requestLocalMode(bool value);bool localMode() const;
     void pause(bool value);bool paused()const;uint32_t receiptCounter()const;
     void loop();

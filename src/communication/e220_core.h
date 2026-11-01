@@ -14,6 +14,17 @@ inline size_t cobsEncode(const uint8_t* in,size_t n,uint8_t* out,size_t cap){if(
 inline size_t cobsDecode(const uint8_t* in,size_t n,uint8_t* out,size_t cap){size_t r=0,w=0;while(r<n){uint8_t code=in[r++];if(!code||r+code-1>n)return 0;for(unsigned i=1;i<code;++i){if(w>=cap||!in[r])return 0;out[w++]=in[r++];}if(code!=255&&r<n){if(w>=cap)return 0;out[w++]=0;}}return w;}
 struct Settings {uint16_t address=0;uint32_t baud=0;uint8_t airRate=0,channel=0,power=0;uint16_t packet=0;bool fixed=false,rssi=false,lbt=false;uint16_t worMs=2000;};
 inline bool settings(const uint8_t* bytes,size_t n,Settings& out){if(n!=9||bytes[0]!=0xc1||bytes[1]!=0||bytes[2]!=6)return false;const uint8_t* p=bytes+3;static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};static const uint16_t lengths[]={200,128,64,32};static const uint8_t power[]={22,17,13,10};if((((p[2]>>3)&3)==1||((p[2]>>3)&3)==2)||p[4]>80)return false;out.address=uint16_t(p[0])<<8|p[1];out.baud=baud[p[2]>>5];out.airRate=p[2]&7;out.packet=lengths[p[3]>>6];out.power=power[p[3]&3];out.channel=p[4];out.rssi=p[5]&128;out.fixed=p[5]&64;out.lbt=p[5]&16;out.worMs=((p[5]&7)+1)*500;return true;}
+// A partial/stale UART prefix must not permanently misalign a settings response.
+// Only a complete, semantically valid public-register frame is accepted.
+class SettingsReader {
+public:
+ uint8_t bytes[9]{};unsigned length=0;uint32_t total=0;
+ void reset(){length=0;total=0;memset(bytes,0,sizeof(bytes));}
+ bool add(uint8_t byte,Settings& out){
+  ++total;if(length==sizeof(bytes)){memmove(bytes,bytes+1,sizeof(bytes)-1);--length;}
+  bytes[length++]=byte;return length==sizeof(bytes)&&settings(bytes,sizeof(bytes),out);
+ }
+};
 inline bool encodeSettings(const Settings& s,const uint8_t* old,uint8_t* out){
  static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};int b=-1;for(int i=0;i<8;++i)if(s.baud==baud[i])b=i;
  int p=s.power==22?0:s.power==17?1:s.power==13?2:s.power==10?3:-1;

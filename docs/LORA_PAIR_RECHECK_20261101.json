@@ -1,0 +1,88 @@
+{
+  "date": "2026-11-01",
+  "scope": "Read-only USB E220 inspection after Master COM11 reconnection",
+  "configuration_writes": 0,
+  "rf_test": "NOT_RUN_MASTER_SETTINGS_READ_TIMEOUT",
+  "devices": {
+    "COM11": {
+      "device_id": "ESP32-10777D842178",
+      "role": "MASTER",
+      "radio": {
+        "state": "ERROR",
+        "error": "SETTINGS_READ_TIMEOUT",
+        "module": "E220-900T22D",
+        "hardware_link_verified": false,
+        "public_settings_read": false,
+        "register_writes": 0,
+        "work_mode": "NORMAL",
+        "sleeping": false,
+        "wor_cycle_ms": 2000,
+        "aux_ready": false,
+        "tx_pending": false,
+        "tx_uart_fragments": 0,
+        "rx_messages": 0,
+        "rejected": 0,
+        "auth_failures": 0,
+        "timeouts": 2,
+        "reassembly_expired": 0,
+        "reassembly_duplicates": 0,
+        "completed_uart_transfers": 0,
+        "rssi_dbm": null,
+        "snr_db": null
+      },
+      "station_ip": "192.168.1.106",
+      "mqtt_revision": 77,
+      "sensor_enable_flags": {
+        "dht_enabled": true,
+        "ina219_enabled": true,
+        "mq135_enabled": true
+      }
+    },
+    "COM8": {
+      "device_id": "ESP32-842F2AE81F84",
+      "role": "NODE",
+      "radio": {
+        "state": "ERROR",
+        "error": "PROBE_COMPLETE_NO_RF",
+        "module": "E220-900T22D",
+        "hardware_link_verified": false,
+        "public_settings_read": true,
+        "register_writes": 0,
+        "work_mode": "NORMAL",
+        "sleeping": false,
+        "wor_cycle_ms": 2000,
+        "aux_ready": false,
+        "tx_pending": false,
+        "tx_uart_fragments": 0,
+        "rx_messages": 0,
+        "rejected": 0,
+        "auth_failures": 0,
+        "timeouts": 0,
+        "reassembly_expired": 0,
+        "reassembly_duplicates": 0,
+        "completed_uart_transfers": 0,
+        "rssi_dbm": null,
+        "snr_db": null,
+        "observed": {
+          "address": 0,
+          "baud": 9600,
+          "channel": 18,
+          "air_rate_code": 2,
+          "power_dbm": 22,
+          "subpacket_bytes": 200,
+          "wor_cycle_ms": 2000,
+          "fixed_mode": false,
+          "rssi_enabled": false,
+          "lbt": false
+        }
+      },
+      "station_ip": "0.0.0.0",
+      "mqtt_revision": 0,
+      "sensor_enable_flags": {
+        "dht_enabled": false,
+        "ina219_enabled": true,
+        "mq135_enabled": false
+      }
+    }
+  }
+}

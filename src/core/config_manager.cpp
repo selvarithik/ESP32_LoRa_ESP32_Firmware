@@ -8,6 +8,8 @@
 #include <WiFi.h>
 #include <type_traits>
 #include <limits>
+#include <memory>
+#include "config_storage_core.h"
 #include "feature_core.h"
 #include "indicator_core.h"
 #include "../config/strict_json.h"
@@ -20,6 +22,16 @@ String readStoredString(const char* key, const String& fallback) {
     // Preferences::getString logs an error for absent keys even with a fallback.
     return prefs.isKey(key) ? prefs.getString(key, fallback) : fallback;
 }
+struct ConfigStore {
+ bool hasBlob(){return prefs.isKey("config_blob_v1");}
+ bool readBlob(String& raw){
+  size_t size=prefs.getBytesLength("config_blob_v1");if(!size||size>12288)return false;
+  std::unique_ptr<char[]> bytes(new(std::nothrow) char[size+1]);if(!bytes||prefs.getBytes("config_blob_v1",bytes.get(),size)!=size)return false;
+  bytes[size]=0;raw=String(bytes.get());return raw.length()==size;
+ }
+ bool writeBlob(const String& raw){return prefs.putBytes("config_blob_v1",raw.c_str(),raw.length())==raw.length();}
+ void eraseLegacy(){if(prefs.isKey("config_v1"))prefs.remove("config_v1");}
+};
 String secret() { char s[33]; for (int i=0;i<4;++i) snprintf(s+i*8,9,"%08lx",(unsigned long)esp_random()); return String(s); }
 void encode(const DeviceConfig& c, JsonDocument& d, bool secrets) {
 #define WRITE(f) d[#f] = c.f;
@@ -91,10 +103,12 @@ bool ConfigManager::begin() {
     LEGACY(lora_channel,"lora_ch") LEGACY(lora_air_rate,"lora_air") LEGACY(lora_tx_power,"lora_pwr")
 #undef LEGACY
     bool storedInvalid=false;
-    String stored=readStoredString("config_v1","");
+    ConfigStore store;bool blob=store.hasBlob();String stored;
+    if(blob&&!store.readBlob(stored)){_ready=false;Serial.println("[CONFIG] Saved configuration storage unreadable; preserved");return false;}
+    if(!blob)stored=readStoredString("config_v1","");
     if (stored.length()) {
         String error;
-        if (!update(stored,error,false)) { storedInvalid=true;Serial.println("[CONFIG] Invalid saved configuration; recovery defaults active"); _config=makeDefaultConfig(); _config.device_id=id; }
+        if (!update(stored,error,false)) {if(blob){_ready=false;Serial.println("[CONFIG] Invalid saved configuration blob; preserved");return false;}storedInvalid=true;Serial.println("[CONFIG] Invalid saved configuration; recovery defaults active"); _config=makeDefaultConfig(); _config.device_id=id; }
     }
     applyTemporaryWiFiDefaults(_config);
     bool generated=false;
@@ -207,11 +221,21 @@ bool ConfigManager::update(const String& json, String& error, bool persist) {
     if(persist&&!save()) { _config=old; error="NVS write failed"; return false; }
     return true;
 }
+bool ConfigManager::setRadioUartPins(int rx,int tx,String& error){
+    // Physical commissioning changes only these pins. Do not rewrite or migrate unrelated
+    // legacy settings through the whole-document validator during a wiring-only change.
+    const auto& c=_config;
+    if(!HardwareProfile::radioUartPins(c.role==DeviceRole::MASTER,rx,tx)||c.lora_uart!=2||rx==c.lora_aux_pin||rx==c.lora_m0_pin||rx==c.lora_m1_pin||tx==c.lora_aux_pin||tx==c.lora_m0_pin||tx==c.lora_m1_pin||(c.dht_enabled&&(rx==c.dht_pin||tx==c.dht_pin))||IndicatorCore::pinConflict(c.role==DeviceRole::MASTER,c.tm1637_enabled,c.dht_enabled,c.dht_pin,c.server_led_enabled,true,rx,tx,c.lora_aux_pin,c.lora_m0_pin,c.lora_m1_pin)){
+        error="RADIO_PIN_CONFLICT_OR_UNSUPPORTED";return false;
+    }
+    if(rx==c.lora_rx_pin&&tx==c.lora_tx_pin)return true;
+    DeviceConfig before=_config;_config.lora_rx_pin=rx;_config.lora_tx_pin=tx;++_config.configuration_revision;
+    if(!save()){_config=before;error="RADIO_PIN_STORAGE_FAILED";return false;}return true;
+}
 bool ConfigManager::save() {
     if(!_ready) return false;
     JsonDocument d; encode(_config,d,true); String data; serializeJson(d,data);
-    if(readStoredString("config_v1","")==data) return true;
-    return prefs.putString("config_v1",data)==data.length();
+    ConfigStore store;return ConfigStorageCore::persist(store,data);
 }
 bool ConfigManager::reset() { return _ready&&prefs.clear(); }
 DeviceConfig& ConfigManager::get() { return _config; }

@@ -14,7 +14,8 @@ public:
  bool idle() const;
  String sender() const;
  String statusJson() const;
- bool requestProbe(bool readOnly=true);
+ bool requestProbe(bool readOnly=true,uint8_t diagnosticPort=2);
+ String isolatedUartLoopback();
  bool powerSleep(bool sleep);
  bool delivery(String& messageId,bool& success);
 };

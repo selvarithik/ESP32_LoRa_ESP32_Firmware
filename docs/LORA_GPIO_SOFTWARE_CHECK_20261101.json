@@ -1,0 +1,145 @@
+{
+  "scope": "AUX readiness samples during read-only probe; no saved configuration/register writes",
+  "devices": [
+    {
+      "port": "COM11",
+      "device_id": "ESP32-10777D842178",
+      "role": "MASTER",
+      "initial_radio": {
+        "state": "ERROR",
+        "error": "SETTINGS_READ_TIMEOUT",
+        "module": "E220-900T22D",
+        "hardware_link_verified": false,
+        "public_settings_read": false,
+        "register_writes": 0,
+        "work_mode": "NORMAL",
+        "sleeping": false,
+        "wor_cycle_ms": 2000,
+        "aux_ready": false,
+        "tx_pending": false,
+        "tx_uart_fragments": 0,
+        "rx_messages": 0,
+        "rejected": 0,
+        "auth_failures": 0,
+        "timeouts": 1,
+        "reassembly_expired": 0,
+        "reassembly_duplicates": 0,
+        "completed_uart_transfers": 0,
+        "rssi_dbm": null,
+        "snr_db": null
+      },
+      "samples": [
+        {
+          "elapsed_s": 1.03,
+          "state": "INSPECTING",
+          "error": "INSPECTING",
+          "aux_ready": true,
+          "aux_sample_valid": true,
+          "public_settings_read": false
+        },
+        {
+          "elapsed_s": 1.62,
+          "state": "INSPECTING",
+          "error": "INSPECTING",
+          "aux_ready": true,
+          "aux_sample_valid": true,
+          "public_settings_read": false
+        },
+        {
+          "elapsed_s": 2.22,
+          "state": "INSPECTING",
+          "error": "INSPECTING",
+          "aux_ready": true,
+          "aux_sample_valid": true,
+          "public_settings_read": false
+        },
+        {
+          "elapsed_s": 3.36,
+          "state": "INSPECTING",
+          "error": "INSPECTING",
+          "aux_ready": true,
+          "aux_sample_valid": true,
+          "public_settings_read": false
+        },
+        {
+          "elapsed_s": 3.94,
+          "state": "ERROR",
+          "error": "SETTINGS_READ_TIMEOUT",
+          "aux_ready": false,
+          "aux_sample_valid": false,
+          "public_settings_read": false
+        }
+      ],
+      "probe": {
+        "ok": true,
+        "code": "RADIO_PROBE_REQUESTED_NO_REGISTER_WRITES"
+      },
+      "m0_raw": "NOT_EXPOSED_BY_INSTALLED_FIRMWARE",
+      "m1_raw": "NOT_EXPOSED_BY_INSTALLED_FIRMWARE"
+    },
+    {
+      "port": "COM8",
+      "device_id": "ESP32-842F2AE81F84",
+      "role": "NODE",
+      "initial_radio": {
+        "state": "ERROR",
+        "error": "PROBE_COMPLETE_NO_RF",
+        "module": "E220-900T22D",
+        "hardware_link_verified": false,
+        "public_settings_read": true,
+        "register_writes": 0,
+        "work_mode": "NORMAL",
+        "sleeping": false,
+        "wor_cycle_ms": 2000,
+        "aux_ready": false,
+        "tx_pending": false,
+        "tx_uart_fragments": 0,
+        "rx_messages": 0,
+        "rejected": 0,
+        "auth_failures": 0,
+        "timeouts": 0,
+        "reassembly_expired": 0,
+        "reassembly_duplicates": 0,
+        "completed_uart_transfers": 0,
+        "rssi_dbm": null,
+        "snr_db": null,
+        "observed": {
+          "address": 0,
+          "baud": 9600,
+          "channel": 18,
+          "air_rate_code": 2,
+          "power_dbm": 22,
+          "subpacket_bytes": 200,
+          "wor_cycle_ms": 2000,
+          "fixed_mode": false,
+          "rssi_enabled": false,
+          "lbt": false
+        }
+      },
+      "samples": [
+        {
+          "elapsed_s": 0.39,
+          "state": "INSPECTING",
+          "error": "INSPECTING",
+          "aux_ready": true,
+          "aux_sample_valid": true,
+          "public_settings_read": false
+        },
+        {
+          "elapsed_s": 0.89,
+          "state": "ERROR",
+          "error": "PROBE_COMPLETE_NO_RF",
+          "aux_ready": false,
+          "aux_sample_valid": false,
+          "public_settings_read": true
+        }
+      ],
+      "probe": {
+        "ok": true,
+        "code": "RADIO_PROBE_REQUESTED_NO_REGISTER_WRITES"
+      },
+      "m0_raw": "NOT_EXPOSED_BY_INSTALLED_FIRMWARE",
+      "m1_raw": "NOT_EXPOSED_BY_INSTALLED_FIRMWARE"
+    }
+  ]
+}
