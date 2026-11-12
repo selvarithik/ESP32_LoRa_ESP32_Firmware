@@ -1,4 +1,4 @@
-import unittest,sys,struct,hashlib
+import unittest,sys,struct,hashlib,zlib
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools'))
 from flash_layout import application_target,expected_flash
@@ -21,6 +21,19 @@ class LayoutTests(unittest.TestCase):
  def test_active_ota_rejected(self):
   raw=self.image();raw[0x10000]=1
   with self.assertRaisesRegex(ValueError,'ACTIVE_OTA'):application_target(raw,b'different',True)
+ def test_active_ota_requires_valid_selector_and_expected_offset(self):
+  raw=self.image()
+  pos=0x8000+5*32
+  raw[pos:pos+32]=b'\xeb\xeb'+b'\xff'*14+hashlib.md5(raw[0x8000:pos]).digest()
+  sequence=struct.pack('<I',1)
+  raw[0x10000:0x10020]=struct.pack('<I20sII',1,b'\xff'*20,2,zlib.crc32(sequence,0xffffffff))
+  raw[0x100000]=0xe9
+  self.assertEqual(application_target(raw,b'different',expected_active_ota_offset=0x100000)['application_offset'],0x100000)
+  with self.assertRaisesRegex(ValueError,'OFFSET_DIFFERS'):
+   application_target(raw,b'different',expected_active_ota_offset=0x280000)
+  raw[0x1001c]^=1
+  with self.assertRaisesRegex(ValueError,'SELECTION_NOT_PROVEN'):
+   application_target(raw,b'different',expected_active_ota_offset=0x100000)
  def test_nvs_new_version_rejected(self):
   raw=self.image();raw[0x12000]=0xfc;raw[0x12008]=0xfd
   with self.assertRaisesRegex(ValueError,'NVS_VERSION'):application_target(raw,b'different',True)

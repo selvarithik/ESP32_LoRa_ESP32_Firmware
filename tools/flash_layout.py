@@ -1,5 +1,5 @@
 """Fail-closed application target selection; never changes partition/OTA data."""
-import struct,hashlib
+import struct,hashlib,zlib
 
 def expected_flash(raw,image,offset,capacity):
     if not image or len(image)>capacity or offset%4096 or offset+capacity>len(raw):
@@ -11,7 +11,7 @@ def expected_flash(raw,image,offset,capacity):
     expected[offset:offset+len(image)]=image
     return bytes(expected),end
 
-def application_target(raw, built, allow_erased_ota=False):
+def application_target(raw, built, allow_erased_ota=False, expected_active_ota_offset=None):
     rows=[]
     for offset in range(0x8000,0x9000,32):
         entry=raw[offset:offset+32]
@@ -31,16 +31,32 @@ def application_target(raw, built, allow_erased_ota=False):
     same=raw[0x8000:0x8000+len(built)]==built
     apps=[r for r in rows if r['kind']==0]
     if same:
+        if expected_active_ota_offset is not None:raise ValueError('ACTIVE_OTA_LAYOUT_NOT_EXPECTED')
         candidates=[r for r in apps if r['start']==0x10000]
-    elif allow_erased_ota:
+    elif allow_erased_ota or expected_active_ota_offset is not None:
         ota=[r for r in rows if r['kind']==1 and r['sub']==0]
         if len(ota)!=1 or ota[0]['size']!=8192:raise ValueError('OTA_SELECTION_NOT_PROVEN')
         o=ota[0]
-        if raw[o['start']:o['start']+o['size']]!=b'\xff'*o['size']:
-            raise ValueError('ACTIVE_OTA_SELECTION_REQUIRES_REVIEW')
-        # IDF boots the first OTA slot when OTA data is erased and no factory app exists.
         if any(r['sub']==0 for r in apps):raise ValueError('FACTORY_APPLICATION_REQUIRES_REVIEW')
-        candidates=[r for r in apps if r['sub']==16]
+        sectors=[raw[o['start']+i:o['start']+i+4096] for i in (0,4096)]
+        occupied=[sector for sector in sectors if sector!=b'\xff'*4096]
+        if expected_active_ota_offset is None:
+            if occupied:raise ValueError('ACTIVE_OTA_SELECTION_REQUIRES_REVIEW')
+            # IDF boots the first OTA slot when OTA data is erased and no factory app exists.
+            candidates=[r for r in apps if r['sub']==16]
+        else:
+            # Only accept one stable, checksummed selector on a checksummed layout.
+            slots=sorted(apps,key=lambda row:row['sub'])
+            if not has_md5 or len(occupied)!=1 or [r['sub'] for r in slots]!=list(range(16,16+len(slots))) or not slots:
+                raise ValueError('ACTIVE_OTA_SELECTION_NOT_PROVEN')
+            record=occupied[0]
+            sequence,state,crc=struct.unpack_from('<I20xII',record)
+            if not 0<sequence<0xffffffff or state!=2 or crc!=zlib.crc32(record[:4],0xffffffff):
+                raise ValueError('ACTIVE_OTA_SELECTION_NOT_PROVEN')
+            slot=slots[(sequence-1)%len(slots)]
+            if slot['start']!=expected_active_ota_offset or raw[slot['start']]!=0xe9:
+                raise ValueError('ACTIVE_OTA_OFFSET_DIFFERS')
+            candidates=[slot]
         nvs=[r for r in rows if r['kind']==1 and r['sub']==2 and r['label']=='nvs']
         if len(nvs)!=1:raise ValueError('NVS_PARTITION_REQUIRED')
         n=nvs[0];pages=[raw[i:i+4096] for i in range(n['start'],n['start']+n['size'],4096)]

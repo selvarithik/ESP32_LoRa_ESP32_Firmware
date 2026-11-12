@@ -11,5 +11,8 @@ inline const char* state(bool enabled,bool link,int phase,uint32_t now,uint32_t 
 inline bool credential(bool master,const char* policy,bool gateway,bool mesh){return !master&&!strcmp(policy,"MASTER_ONLY")?mesh:gateway;}
 inline bool gatewayCredential(bool localEnabled,bool legacy,bool dedicated){return legacy||(localEnabled&&dedicated);}
 inline bool direct(bool master,bool enabled,const char* policy,bool configured){return master||(enabled&&strcmp(policy,"MASTER_ONLY")&&configured);}
+inline bool requiresDirectGateway(bool localEnabled,const char* policy){
+ return localEnabled&&strcmp(policy,"DIRECT_ONLY")==0;
+}
 inline bool fallback(bool node,bool enabled,const char* policy,bool failed,bool viaGateway,bool masterConfigured){return node&&enabled&&!strcmp(policy,"DIRECT_PREFERRED")&&failed&&viaGateway&&masterConfigured;}
 }

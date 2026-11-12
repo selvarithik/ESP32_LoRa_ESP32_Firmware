@@ -16,7 +16,7 @@ class SecretFile:
   finally:ctypes.windll.kernel32.LocalFree(target.data)
 def digest(raw):return hashlib.sha256(raw).hexdigest()
 def main():
- p=argparse.ArgumentParser();p.add_argument('--stage',choices=['backup','verify-backup','upload'],required=True);p.add_argument('--read-chunk-size',type=int,choices=[0,65536,131072,262144],default=0);p.add_argument('--baud',type=int,choices=[115200,230400,460800],default=460800);p.add_argument('--command-timeout',type=int,default=240);p.add_argument('--port',required=True);p.add_argument('--confirm-device-id',required=True);p.add_argument('--run-name',default='recovery-upload-20261029');p.add_argument('--live',action='store_true',required=True);p.add_argument('--allow-erased-ota-layout',action='store_true');p.add_argument('--verify-device-md5',action='store_true');a=p.parse_args()
+ p=argparse.ArgumentParser();p.add_argument('--stage',choices=['backup','verify-backup','upload'],required=True);p.add_argument('--read-chunk-size',type=int,choices=[0,65536,131072,262144],default=0);p.add_argument('--baud',type=int,choices=[115200,230400,460800],default=460800);p.add_argument('--command-timeout',type=int,default=240);p.add_argument('--port',required=True);p.add_argument('--confirm-device-id',required=True);p.add_argument('--run-name',default='recovery-upload-20261029');p.add_argument('--live',action='store_true',required=True);p.add_argument('--allow-erased-ota-layout',action='store_true');p.add_argument('--expected-active-ota-offset',type=lambda value:int(value,0));p.add_argument('--verify-device-md5',action='store_true');a=p.parse_args()
  assert os.name=='nt','WINDOWS_ONLY'
  assert re.fullmatch(r'COM[1-9][0-9]*',a.port),'INVALID_COM_PORT'
  assert 30<=a.command_timeout<=1200,'INVALID_COMMAND_TIMEOUT'
@@ -58,11 +58,11 @@ def main():
    encrypted=SecretFile.protect(before);assert SecretFile.protect(encrypted,True)==before;(folder/'backup.dpapi').write_bytes(encrypted)
    assert digest(SecretFile.protect((folder/'backup.dpapi').read_bytes(),True))==digest(before)
    one.unlink()
-  layout=application_target(before,built,a.allow_erased_ota_layout)
+  layout=application_target(before,built,a.allow_erased_ota_layout,a.expected_active_ota_offset)
   report={'port':a.port,'device_id':a.confirm_device_id,'flash_bytes':len(before),'backup_sha256':digest(before),'full_backup_verified':True,'backup_encrypted':True,'physical_upload':False,**layout}
   (folder/'backup.json').write_text(json.dumps(report,indent=2));print(json.dumps(report));return
  report=json.loads((folder/'backup.json').read_text());assert report['port']==a.port and report['device_id']==a.confirm_device_id,'BACKUP_IDENTITY_DIFFERS';identity=command('prewrite-identity',['flash_id']);assert expected_mac in identity.lower(),'PHYSICAL_MAC_DIFFERS';before=SecretFile.protect((folder/'backup.dpapi').read_bytes(),True);assert digest(before)==report['backup_sha256']
- built=(ROOT/'.pio/build/esp32dev/partitions.bin').read_bytes();layout=application_target(before,built,a.allow_erased_ota_layout)
+ built=(ROOT/'.pio/build/esp32dev/partitions.bin').read_bytes();layout=application_target(before,built,a.allow_erased_ota_layout,a.expected_active_ota_offset)
  assert not layout['boot_metadata_repair_required'],'LEGACY_PARTITION_TABLE_REQUIRES_APPROVED_BOOT_METADATA_REPAIR_NO_UPLOAD'
  # The board has stayed in the ROM/stub after both full reads. Recheck identity
  # and protected regions immediately before writing; do not run the old app.

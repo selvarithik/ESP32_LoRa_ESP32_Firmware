@@ -5,6 +5,49 @@
 #include <vector>
 #include <algorithm>
 #include <random>
+
+static void simulatedTwoBoardBench() {
+ std::mt19937 random(0xE220);
+ const uint8_t boards[2][6]={{0x78,0x21,0x84,0x7d,0x77,0x10},{0x84,0x1f,0xe8,0x2a,0x2f,0x84}};
+ const uint16_t packetSizes[]={64,128,200};
+ for(uint32_t trial=1;trial<=100;++trial){
+  const unsigned origin=trial%2;
+  const uint8_t step=E220Core::span(packetSizes[random()%3]);
+  std::vector<uint8_t> payload(1+step+random()%1024);
+  for(auto& byte:payload)byte=uint8_t(random());
+  const unsigned count=(payload.size()+step-1)/step;
+  std::vector<unsigned> order(count);
+  for(unsigned i=0;i<count;++i)order[i]=i;
+  std::shuffle(order.begin(),order.end(),random);
+  E220Core::Assembler receiver;
+  const auto deliver=[&](unsigned part,uint32_t now){
+   uint8_t raw[200]{},wire[202]{},decoded[200]{};
+   size_t length=E220Core::fragment(payload.data(),payload.size(),trial,boards[origin],boards[1-origin],step,part,raw);
+   assert(length);
+   const size_t encoded=E220Core::cobsEncode(raw,length,wire,sizeof(wire));
+   assert(encoded&&E220Core::cobsDecode(wire,encoded-1,decoded,sizeof(decoded))==length);
+   E220Core::Fragment f;
+   assert(E220Core::parse(decoded,length,f));
+   assert(!memcmp(f.sender,boards[origin],6)&&!memcmp(f.target,boards[1-origin],6));
+   return receiver.add(f,now);
+  };
+  const unsigned lost=order.back();
+  for(unsigned part:order)if(part!=lost){
+   assert(!deliver(part,10));
+   assert(!deliver(part,11)); // Duplicate delivery must not complete a partial transfer.
+  }
+  const uint32_t retryAt=12+E220Core::AssemblyLifetime;
+  receiver.expire(retryAt);
+  assert(receiver.expired==1);
+  for(unsigned part:order){
+   auto* received=deliver(part,retryAt);
+   if(part==lost)assert(received&&received->total==payload.size()&&!memcmp(received->data,payload.data(),payload.size()));
+   else assert(!received);
+  }
+ }
+ puts("PASS seeded two-board simulation: 100 transfers, both directions, loss, expiry, duplicates and retry");
+}
+
 int main(){
  assert(HardwareProfile::radioUartPins(true,16,17));assert(HardwareProfile::radioUartPins(false,16,17));
  assert(HardwareProfile::radioUartPins(true,32,33));assert(!HardwareProfile::radioUartPins(false,32,33));
@@ -43,5 +86,6 @@ int main(){
  E220Core::Routes routes;assert(routes.observe("ESP32-010203040506","ESP32-060504030201",1,0));assert(routes.find("ESP32-010203040506",59999,60000));assert(!routes.find("ESP32-010203040506",60001,60000));routes.expire(60001,60000);assert(!routes.rows[0].destination[0]);assert(!routes.observe("bad id","peer",1,0));
  assert(E220Core::forwardAllowed(3,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(1,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,4,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,1,4,"RADIO:same","RADIO:same"));
  assert(routes.observe("target","direct",1,0));assert(routes.observe("target","relay",2,1));assert(!strcmp(routes.find("target",2,60000)->nextHop,"direct"));
+ simulatedTwoBoardBench();
  puts("PASS production E220 settings/stream resync, COBS 500 vectors, all subpacket sizes, reassembly, duplicates, bounds, expiry, routes and role safety");
 }

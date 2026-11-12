@@ -9,6 +9,10 @@ int main(int argc,char** argv){
  assert(!LocalIpCore::direct(false,true,"MASTER_ONLY",true));
  assert(LocalIpCore::direct(false,true,"DIRECT_ONLY",true));
  assert(!LocalIpCore::direct(false,false,"DIRECT_ONLY",true));
+ assert(LocalIpCore::requiresDirectGateway(true,"DIRECT_ONLY"));
+ assert(!LocalIpCore::requiresDirectGateway(false,"DIRECT_ONLY"));
+ assert(!LocalIpCore::requiresDirectGateway(true,"DIRECT_PREFERRED"));
+ assert(!LocalIpCore::requiresDirectGateway(true,"MASTER_ONLY"));
  assert(LocalIpCore::fallback(true,true,"DIRECT_PREFERRED",true,true,true));
  assert(!LocalIpCore::fallback(true,true,"DIRECT_ONLY",true,true,true));
  assert(!LocalIpCore::fallback(true,true,"DIRECT_PREFERRED",false,true,true));

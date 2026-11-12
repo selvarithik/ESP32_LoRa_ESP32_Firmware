@@ -66,12 +66,15 @@ bool track(const Message& m,const String& host,bool gateway=false) {
 }
 bool upstream(const Message& input) {
  auto& c=configManager.get();Message m=input;
- if(transportManager.localMode()){m.destination="GATEWAY";m.nextHop="GATEWAY";}
+ const bool localMode=transportManager.localMode();
+ if(localMode){m.destination="GATEWAY";m.nextHop="GATEWAY";}
+ const bool direct=LocalIpCore::direct(false,localMode,c.routing_policy.c_str(),(!c.gateway_token.isEmpty()||!c.local_ip_token.isEmpty())&&!c.server_host.isEmpty());
+ if(c.role==DeviceRole::NODE&&LocalIpCore::requiresDirectGateway(localMode,c.routing_policy.c_str()))
+     return direct&&track(m,c.server_host,true);
  if(c.role==DeviceRole::NODE&&loraTransport.isInitialized()){String parent=masterId();if(parent.isEmpty()&&m.type!=PacketType::HELLO)return false;m.destination=parent.isEmpty()?"BROADCAST":parent;m.nextHop=m.destination;return track(m,"RADIO:"+m.destination);}
  if(c.role==DeviceRole::MASTER)return (transportManager.mqttConnected()||LocalIpCore::gatewayCredential(transportManager.localMode(),!c.gateway_token.isEmpty(),!c.local_ip_token.isEmpty()))&&track(m,c.server_host,true);
- bool direct=LocalIpCore::direct(false,transportManager.localMode(),c.routing_policy.c_str(),(!c.gateway_token.isEmpty()||!c.local_ip_token.isEmpty())&&!c.server_host.isEmpty());
  if(direct)return track(m,c.server_host,true);
- return (!transportManager.localMode()||c.routing_policy!="DIRECT_ONLY")&&!c.mesh_key.isEmpty()&&!c.master_id.isEmpty()&&track(m,c.master_host);
+ return !c.mesh_key.isEmpty()&&!c.master_id.isEmpty()&&track(m,c.master_host);
 }
 void complete(const String& id,const String& source) {for(auto& p:pending)if(p.used&&p.command&&p.packet.messageId==id&&p.packet.destination==source)p.used=false;}
 String bodyStatus() {
@@ -103,7 +106,7 @@ bool execute(const Message& m,String& result,bool gateway=false,const String& ch
     else if(type=="GET_SENSOR_STATUS")result=sensorManager.healthJson();
     else if(type=="GET_MESH_STATUS"||type=="GET_NODE_STATUS"||type=="GET_ROUTE_INFO"){JsonDocument all,out;deserializeJson(all,networkService.statusJson());out["radio_state"]=loraTransport.isInitialized()?"READY_LINK_UNVERIFIED":"DISABLED_OR_ERROR";out["hardware_verified"]=false;if(type=="GET_ROUTE_INFO")out["routes"]=all["radio_routes"];else if(type=="GET_NODE_STATUS"){auto list=out["nodes"].to<JsonArray>();for(JsonObject node:all["nodes"].as<JsonArray>()){auto entry=list.add<JsonObject>();entry["device_id"]=node["device_id"];entry["status"]=node["status"];entry["age_ms"]=node["age_ms"];}}else{out["node_count"]=all["nodes"].size();out["route_count"]=all["radio_routes"].size();out["pending"]=all["pending"];out["delivery_failures"]=all["delivery_failures"];out["duplicates"]=all["duplicates"];}serializeJson(out,result);}
     else if(type=="GET_TELEMETRY")result=sensorManager.telemetryJson();
-    else if(type=="GET_CONFIG"){JsonDocument all,out;deserializeJson(all,configManager.toJson());const char* fields[]={"device_id","device_name","role","master_id","configuration_version","configuration_revision","telemetry_seconds","heartbeat_seconds","enabled","sleep_enabled","sleep_mode","lora_sleep_mode","sleep_start_minute","sleep_duration_seconds","sleep_days_mask","utc_offset_minutes","local_ip_enabled","routing_policy","server_host","server_port","wifi_dhcp","wifi_ip","wifi_subnet","wifi_gateway","wifi_dns","wifi_dns2","dht_enabled","dht_pin","ina219_enabled","ina219_address","ina219_shunt_milliohms","mq135_enabled","mq135_warmup_seconds"};for(const char* key:fields)out[key]=all[key];out["config_scope"]="RUNTIME";serializeJson(out,result);}
+    else if(type=="GET_CONFIG"){JsonDocument all,out;deserializeJson(all,configManager.toJson());const char* fields[]={"device_id","device_name","role","master_id","configuration_version","configuration_revision","telemetry_seconds","heartbeat_seconds","enabled","sleep_enabled","sleep_mode","lora_sleep_mode","sleep_start_minute","sleep_duration_seconds","sleep_days_mask","utc_offset_minutes","local_ip_enabled","routing_policy","server_host","server_port","wifi_dhcp","wifi_ip","wifi_subnet","wifi_gateway","wifi_dns","wifi_dns2","dht_enabled","dht_pin","ina219_enabled","ina219_address","ina219_shunt_milliohms","mq135_enabled","mq135_warmup_seconds"};for(const char* key:fields)out[key]=all[key];for(JsonPair entry:all.as<JsonObject>())if(OperationRules::radioField(entry.key().c_str()))out[entry.key().c_str()]=entry.value();out["lora_enabled"]=configManager.get().lora_enabled;out["lora_apply_settings"]=configManager.get().lora_apply_settings;out["config_scope"]="RUNTIME";serializeJson(out,result);}
     else if(type=="GET_NETWORK")result=wifiManager.statusJson();
     else if(type=="WIFI_SCAN") {
         // An all-channel scan can interrupt the active TLS telemetry stream.

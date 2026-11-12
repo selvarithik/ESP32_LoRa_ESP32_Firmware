@@ -49,13 +49,111 @@ async function api(path,method='GET',data){if(method!=='GET'&&!sessionCsrf){cons
 async function status(){const d=await api('/api/status');const communication={};for(const key of ['device','wifi','network','gateway_reachable','mqtt_connected','internet_status','transport','last_success_uptime_ms','queue_overflows','power','indicators','radio','mesh'])if(d[key]!==undefined)communication[key]=d[key];$('overview').textContent=JSON.stringify(communication,null,2);$('summaryId').textContent=d.device?.id||'Unknown';$('summaryRole').textContent=d.device?.role||'Unknown';$('summaryIp').textContent=d.wifi?.ip||'Unknown';$('summaryMqtt').textContent=typeof d.mqtt_connected==='boolean'?(d.mqtt_connected?'Connected':'Disconnected'):'Unknown';
 
 }
-async function load(){current=await api('/api/config');$('fields').replaceChildren();for(const [name,keys] of Object.entries(groups)){let box=document.createElement('fieldset'),legend=document.createElement('legend'),grid=document.createElement('div');legend.textContent=name;box.id='setup_'+name;const unavailable=['Ethernet'].includes(name);if(unavailable){box.disabled=true;legend.textContent+=' Ã‚· driver unavailable';}box.append(legend);grid.className='grid';box.append(grid);for(const k of keys){let label=document.createElement('label'),el;if(['sleep_mode','lora_sleep_mode','lora_work_mode'].includes(k)){el=document.createElement('select');for(const v of ({sleep_mode:['DEEP','LIGHT'],lora_sleep_mode:['KEEP','DEEP'],lora_work_mode:['NORMAL','WOR_TX','WOR_RX']}[k])){const op=document.createElement('option');op.value=v;op.textContent=v;el.append(op);}}else if(k==='role'){el=document.createElement('select');for(const role of ['MASTER','NODE']){let op=document.createElement('option');op.textContent=role;el.append(op);}}else if(k==='routing_policy'){el=document.createElement('select');for(const v of ['MASTER_ONLY','DIRECT_ONLY','DIRECT_PREFERRED']){const option=document.createElement('option');option.value=v;option.textContent=v;el.append(option);}}else if(k.endsWith('_ca')){el=document.createElement('textarea');el.rows=5;}else{el=document.createElement('input');el.type=secrets.includes(k)?'password':typeof current[k]==='boolean'?'checkbox':typeof current[k]==='number'?'number':'text';}const limits={heartbeat_seconds:[5,3600],telemetry_seconds:[2,3600],retry_count:[0,5],command_timeout_ms:[1000,30000],message_max_age_ms:[1000,300000],max_hops:[1,15],route_timeout_seconds:[10,86400],ina219_address:[64,79],ina219_shunt_milliohms:[0,1000],mq135_warmup_seconds:[60,604800],sleep_start_minute:[0,1439],sleep_duration_seconds:[60,86400],sleep_days_mask:[1,127],utc_offset_minutes:[-720,840],server_port:[1,65535],internet_probe_port:[1,65535]};if(limits[k]){el.min=limits[k][0];el.max=limits[k][1];}if(k==='device_name'){el.required=true;el.maxLength=64;}if(k==='wifi_ssid')el.maxLength=32;if(k==='local_ip_enabled'){el.disabled=true;el.title='Change through the Gateway password-confirmed transport transaction';}el.name=k;el.id='field_'+k;label.textContent=k.replaceAll('_',' ');if(el.type==='checkbox')el.checked=current[k];else el.value=current[k]??'';if(secrets.includes(k)){el.value='';el.autocomplete='new-password';if(!k.endsWith('_ca')){el.disabled=true;el.placeholder='Use physical USB commissioning';}}label.append(el);grid.append(label);} $('fields').append(box);}const selected={'':[],network:['WiFi','Gateway','Internet'],device:['Device','Advanced','Indicators','Sleep','DHT11','INA219','MQ135'],radio:['E220'],nodes:[],system:[]}[location.pathname.slice(1)];if(selected)for(const box of $('fields').children)box.hidden=!selected.includes(box.id.slice(6));$('settings').closest('section').hidden=!!selected&&!selected.length;$('systemPanel').hidden=location.pathname!=='/system';$('send').disabled=current.role!=='MASTER';if(location.pathname==='/nodes'){$('nodesPanel').hidden=false;$('nodesState').textContent=JSON.stringify(await api('/api/mesh'),null,2);}await status();feedback('Ready. Device ID: '+current.device_id+' • firmware '+current.firmware_version);}
-$('settings').onsubmit=async e=>{e.preventDefault();try{const data={configuration_revision:current.configuration_revision};if(!confirm('Saving changed connection settings may restart the device. Continue?'))return;for(const el of e.target.elements){if(!el.name||el.disabled||el.closest('fieldset')?.disabled)continue;if(secrets.includes(el.name)&&!el.value)continue;data[el.name]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;}if($('clearWifi').checked)data.wifi_password='';const result=await api('/api/config','POST',data);feedback(result.restart_required?'Configuration saved. Restarting in 2 seconds. Reconnect and reload.':'Configuration already matches; no restart required.');if(result.restart_required&&Number.isInteger(result.saved_revision))setTimeout(async()=>{try{await load();feedback(current.configuration_revision===result.saved_revision?'Saved state read back after restart.':'Restart pending; read saved settings again after reconnecting.');}catch(error){feedback('Saved; connection interrupted during restart. Reconnect using the actual DHCP address, then read saved settings.');}},5000);}catch(e){feedback(e.message);}};
+async function load(){current=await api('/api/config');$('fields').replaceChildren();for(const [name,keys] of Object.entries(groups)){let box=document.createElement('fieldset'),legend=document.createElement('legend'),grid=document.createElement('div');legend.textContent=name;box.id='setup_'+name;const unavailable=['Ethernet'].includes(name);if(unavailable){box.disabled=true;legend.textContent+=' Ã‚· driver unavailable';}box.append(legend);grid.className='grid';box.append(grid);for(const k of keys){let label=document.createElement('label'),el;if(['sleep_mode','lora_sleep_mode','lora_work_mode'].includes(k)){el=document.createElement('select');for(const v of ({sleep_mode:['DEEP','LIGHT'],lora_sleep_mode:['KEEP','DEEP'],lora_work_mode:['NORMAL','WOR_TX','WOR_RX']}[k])){const op=document.createElement('option');op.value=v;op.textContent=v;el.append(op);}}else if(k==='role'){el=document.createElement('select');for(const role of ['MASTER','NODE']){let op=document.createElement('option');op.textContent=role;el.append(op);}}else if(k==='routing_policy'){el=document.createElement('select');for(const v of ['MASTER_ONLY','DIRECT_ONLY','DIRECT_PREFERRED']){const option=document.createElement('option');option.value=v;option.textContent=v;el.append(option);}}else if(k.endsWith('_ca')){el=document.createElement('textarea');el.rows=5;}else{el=document.createElement('input');el.type=secrets.includes(k)?'password':typeof current[k]==='boolean'?'checkbox':typeof current[k]==='number'?'number':'text';}const limits={heartbeat_seconds:[5,3600],telemetry_seconds:[2,3600],retry_count:[0,5],command_timeout_ms:[1000,30000],message_max_age_ms:[1000,300000],max_hops:[1,15],route_timeout_seconds:[10,86400],ina219_address:[64,79],ina219_shunt_milliohms:[0,1000],mq135_warmup_seconds:[60,604800],sleep_start_minute:[0,1439],sleep_duration_seconds:[60,86400],sleep_days_mask:[1,127],utc_offset_minutes:[-720,840],server_port:[1,65535],internet_probe_port:[1,65535]};if(limits[k]){el.min=limits[k][0];el.max=limits[k][1];}if(k==='lora_rssi')el.title='Append the received packet RSSI byte. Use matching radio settings on both boards.';if(k==='device_name'){el.required=true;el.maxLength=64;}if(k==='wifi_ssid')el.maxLength=32;if(k==='local_ip_enabled'){el.disabled=true;el.title='Change through the Gateway password-confirmed transport transaction';}el.name=k;el.id='field_'+k;label.textContent=k.replaceAll('_',' ');if(el.type==='checkbox')el.checked=current[k];else el.value=current[k]??'';if(secrets.includes(k)){el.value='';el.autocomplete='new-password';if(!k.endsWith('_ca')){el.disabled=true;el.placeholder='Use physical USB commissioning';}}label.append(el);grid.append(label);} $('fields').append(box);}const selected={'':[],network:['WiFi','Gateway','Internet'],device:['Device','Advanced','Indicators','Sleep','DHT11','INA219','MQ135'],radio:['E220'],nodes:[],system:[]}[location.pathname.slice(1)];if(selected)for(const box of $('fields').children)box.hidden=!selected.includes(box.id.slice(6));$('settings').closest('section').hidden=!!selected&&!selected.length;$('systemPanel').hidden=location.pathname!=='/system';$('send').disabled=current.role!=='MASTER';if(location.pathname==='/nodes'){$('nodesPanel').hidden=false;$('nodesState').textContent=JSON.stringify(await api('/api/mesh'),null,2);}await status();feedback('Ready. Device ID: '+current.device_id+' • firmware '+current.firmware_version);}
+$('settings').onsubmit=async e=>{e.preventDefault();try{const data={configuration_revision:current.configuration_revision};if(!confirm('Saving changed connection settings may restart the device. Continue?'))return;for(const el of e.target.elements){if(!el.name||el.disabled||el.closest('fieldset')?.disabled||(location.pathname==='/radio'&&el.closest('fieldset')?.hidden))continue;if(secrets.includes(el.name)&&!el.value)continue;data[el.name]=el.type==='checkbox'?el.checked:el.type==='number'?Number(el.value):el.value;}if(location.pathname!=='/radio'&&$('clearWifi').checked)data.wifi_password='';const result=await api('/api/config','POST',data);feedback(result.restart_required?'Configuration saved. Restarting in 2 seconds. Reconnect and reload.':'Configuration already matches; no restart required.');if(result.restart_required&&Number.isInteger(result.saved_revision))setTimeout(async()=>{try{await load();feedback(current.configuration_revision===result.saved_revision?'Saved state read back after restart.':'Restart pending; read saved settings again after reconnecting.');}catch(error){feedback('Saved; connection interrupted during restart. Reconnect using the actual DHCP address, then read saved settings.');}},5000);}catch(e){feedback(e.message);}};
 $('reloadSettings').onclick=()=>load().catch(e=>feedback(e.message));
 $('refresh').onclick=()=>status().catch(e=>feedback(e.message));$('scan').onclick=async()=>{try{$('networks').textContent=JSON.stringify(await api('/api/network/scan'),null,2);feedback('Scan starts asynchronously; click again in a few seconds for results.');}catch(e){feedback(e.message);}};
 $('send').onclick=async()=>{try{$('result').textContent=JSON.stringify(await api('/api/commands','POST',{destination:$('destination').value,command_type:$('command').value,payload:$('commandArgs').value.trim()?JSON.parse($('commandArgs').value):$('command').value.endsWith('_INTERVAL')?{seconds:Number($('seconds').value)}:{}}),null,2);feedback('Queued. Refresh status for ACK and final response.');}catch(e){feedback(e.message);}};
 $('restart').onclick=async()=>{if(!confirm('Restart the ESP32 and interrupt connections?'))return;try{await api('/api/system/restart','POST',{});feedback('Restart accepted.');}catch(e){feedback(e.message);}};
 $('reset').onclick=async()=>{if($('resetId').value!==current.device_id){feedback('Enter the exact device ID first.');return;}if(!confirm('Erase all settings and return to USB commissioning?'))return;try{await api('/api/system/factory-reset','POST',{confirm_device_id:$('resetId').value});feedback('Reset accepted. Use physical USB commissioning to set credentials.');}catch(e){feedback(e.message);}};
+const radioMessages = {
+    SETTINGS_READ_TIMEOUT: "The E220 did not answer the settings request. Check module power, common ground, UART wiring and AUX.",
+    SETTINGS_PARTIAL_RESPONSE: "The E220 reply was incomplete. Check the UART connections and module power.",
+    INVALID_PUBLIC_SETTINGS: "The E220 replied with invalid settings data. Check the wiring and inspect again.",
+    SETTINGS_MISMATCH_NO_RF: "Saved firmware settings differ from the E220 registers. Compare the channel, air rate, power and RSSI setting before activation.",
+    UNVERIFIED_RADIO_PINS: "The configured UART and control pins do not match this board’s supported wiring.",
+    MESH_CREDENTIAL_REQUIRED: "Provision the shared mesh credential over USB before enabling radio traffic.",
+    MODE_RESTORE_TIMEOUT: "AUX did not become ready after the mode change. Check AUX, M0, M1 and power.",
+    AUX_BUSY_TIMEOUT: "The radio stayed busy too long to send. Check AUX and the module power supply.",
+    REGISTER_WRITE_REJECTED: "The E220 did not confirm the register write. Inspect the module before trying again.",
+    MESSAGE_TX_EXPIRED: "The radio did not send the message before its deadline.",
+    SLEEP_MODE_TIMEOUT: "The radio did not confirm the sleep-mode change.",
+    RADIO_BUSY_OR_UNAVAILABLE: "The radio is busy or unavailable. Refresh its status before trying again.",
+    RADIO_UPDATE_REQUIRES_DISABLED_LOCAL_COMMISSIONING: "Disable the radio and register writes on the ESP32 before saving setup from Gateway.",
+    REVISION_CONFLICT: "The saved settings changed. Read the current setup before saving again."
+};
+
+function radioFault(code) {
+    if (!code || ["NONE", "DISABLED", "INSPECTING", "PROBE_COMPLETE_NO_RF"].includes(code)) return "";
+    if (String(code).includes("ACK_TIMEOUT")) return "The device did not acknowledge the command before the deadline. Check the Gateway connection and retry.";
+    return radioMessages[code] || `The device reported ${code}. Refresh status and check its connection.`;
+}
+
+function renderRadioReport(target, radio, routes) {
+    target.replaceChildren();
+    if (radio) {
+        const status = radio.rf_receive_state === "RECEIVING" ? "Receiving authenticated LoRa packets"
+            : radio.rf_receive_state === "STALE" ? "Last radio reception is stale"
+            : radio.state === "INSPECTING" ? "Reading E220 registers"
+            : radio.state === "SLEEPING" ? "Radio sleeping"
+            : radio.state === "READY_LINK_UNVERIFIED" ? "Radio ready, waiting for a peer packet"
+            : radio.error === "PROBE_COMPLETE_NO_RF" ? "E220 detected over UART, RF disabled"
+            : radio.state === "DISABLED" ? "Radio disabled"
+            : radio.state === "ERROR" ? "Radio fault" : "Radio status unavailable";
+        const o = radio.observed;
+        const rssi = Number.isFinite(radio.rssi_dbm) ? `${radio.rssi_dbm} dBm${radio.rf_receive_state === "RECEIVING" ? "" : " (last sample)"}`
+            : o?.rssi_enabled === false ? "RSSI is disabled in the module" : "Waiting for a valid packet with RSSI";
+        const details = [
+            ["Connection", status], ["Module readback", radio.public_settings_read ? "Registers read successfully" : "No valid register readback"],
+            ["Received signal (RSSI)", rssi], ["Last radio peer", radio.last_rf_peer],
+            ["Last received", Number.isFinite(radio.last_rf_age_ms) ? `${Math.floor(radio.last_rf_age_ms / 1000)} s before this report` : null],
+            ["AUX pin", radio.pin_levels?.aux_high == null ? null : radio.pin_levels.aux_high ? "High" : "Low"],
+            ["Channel", o && Number.isInteger(o.channel) ? `${o.channel} · ${(850.125 + o.channel).toFixed(3)} MHz` : null],
+            ["Air rate code", o?.air_rate_code], ["Transmit power", o ? `${o.power_dbm} dBm` : null],
+            ["UART", o ? `${o.baud} baud` : null], ["Subpacket size", o ? `${o.subpacket_bytes} bytes` : null],
+            ["Addressing", o ? o.fixed_mode ? "Fixed" : "Transparent" : null], ["Work mode", radio.work_mode],
+            ["Received messages", radio.rx_messages], ["Timeouts", radio.timeouts], ["Authentication failures", radio.auth_failures],
+            ["Fault", radioFault(radio.error) || null]
+        ];
+        const list = document.createElement("dl");
+        for (const [label, value] of details) {
+            if (value == null) continue;
+            const name = document.createElement("dt"); name.textContent = label;
+            const item = document.createElement("dd"); item.textContent = value;
+            list.append(name, item);
+        }
+        target.append(list);
+    }
+    if (Array.isArray(routes)) {
+        const heading = document.createElement("h3"); heading.textContent = "Reported routes";
+        const list = document.createElement("ul");
+        for (const route of routes) {
+            const item = document.createElement("li");
+            const hops = route.hop_count ?? route.hops;
+            item.textContent = `${route.destination || "Unknown destination"} via ${route.next_hop || "unknown next hop"}${Number.isFinite(hops) ? ` (${hops} hop${hops === 1 ? "" : "s"})` : ""}`;
+            list.append(item);
+        }
+        if (!routes.length) { const item = document.createElement("li"); item.textContent = "No route has been learned."; list.append(item); }
+        target.append(heading, list);
+    }
+}
+
+if (location.pathname === '/radio') {
+  $('overview').closest('details').hidden = true;
+  const section = document.createElement('section');
+  section.innerHTML = '<h2>E220 diagnostics</h2><p>Read the module registers and compare them with saved settings. Use the regional radio profile before enabling transmission.</p><button type="button" id="inspectRadioReadback">Inspect E220 over UART</button> <button type="button" id="refreshRadioReadback">Refresh radio and routes</button><div id="radioReadback" aria-live="polite"></div>';
+  $('settings').closest('section').before(section);
+  async function renderRadio() {
+    const [status, mesh] = await Promise.all([api('/api/status'), api('/api/mesh')]);
+    renderRadioReport($('radioReadback'), status.radio, mesh.radio_routes || []);
+    return status.radio;
+  }
+  $('refreshRadioReadback').onclick = () => renderRadio().catch(error => feedback(error.message));
+  $('inspectRadioReadback').onclick = async () => {
+    const button = $('inspectRadioReadback');
+    button.disabled = true;
+    try {
+      const result = await api('/api/radio/inspect', 'POST', {});
+      for (let attempt = 0; attempt < (result.requested ? 20 : 1); attempt++) {
+        if (result.requested) await new Promise(resolve => setTimeout(resolve, 800));
+        const radio = await renderRadio();
+        if (radio?.state !== 'INSPECTING') break;
+      }
+    } catch (error) { feedback(error.message); }
+    finally { button.disabled = false; }
+  };
+  renderRadio().catch(error => feedback(error.message));
+}
 load().catch(e=>feedback(e.message));
 
 // Only a compact authenticated status document is polled; no config or secrets.

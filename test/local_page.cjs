@@ -14,6 +14,7 @@ Object.assign(config,{wifi_dns2:'',sleep_enabled:false,sleep_start_minute:0,slee
    const ctx=await browser.newContext({viewport:{width,height:900}}),page=await ctx.newPage();let invalid=false,unchanged=false,lastSave=null,lastReset=null;
    let sensorSnapshot={valid:true,status:'OK',parameters:{temperature:29.4,humidity:54}};
    let connection={wifi_connected:true,server_connected:true,mqtt_connected:true,unix_time:1793205000,clock_valid:true,radio:{enabled:false,state:'DISABLED',error:'DISABLED',hardware_link_verified:false,public_settings_read:false}};
+   let radioReport={state:'ERROR',error:'SETTINGS_READ_TIMEOUT',public_settings_read:false};
    const errors=[];page.on('pageerror',e=>errors.push(e.message));
    await page.route('http://esp32.test/**',async route=>{
     const req=route.request(),url=new URL(req.url());let status=200,body={};
@@ -22,7 +23,7 @@ Object.assign(config,{wifi_dns2:'',sleep_enabled:false,sleep_start_minute:0,slee
     else if(url.pathname==='/api/config'&&req.method()==='GET')body=config;
     else if(url.pathname==='/api/connectivity')body=connection;
     else if(url.pathname==='/api/radio/inspect')body={requested:true,rf_transmission:false,register_writes:false};
-    else if(url.pathname==='/api/status')body={device:{id:config.device_id,role:'MASTER'},sensor:sensorSnapshot,ethernet_status:'NOT_AVAILABLE',network:{command_state:'COMPLETED'}};
+    else if(url.pathname==='/api/status')body={device:{id:config.device_id,role:'MASTER'},sensor:sensorSnapshot,ethernet_status:'NOT_AVAILABLE',network:{command_state:'COMPLETED'},radio:radioReport};
     else if(url.pathname==='/api/config'){lastSave=req.postDataJSON();assert.equal(req.headers()['x-config-request'],'1');if(invalid){status=400;body={error:'Intervals out of range'};}else body={saved:true,restart_required:!unchanged};}
     else if(url.pathname==='/api/commands')body={command_id:'MSG-TEST',state:'QUEUED'};
     else if(url.pathname==='/api/system/factory-reset'){lastReset=req.postDataJSON();body={accepted:true};}
@@ -61,6 +62,15 @@ Object.assign(config,{wifi_dns2:'',sleep_enabled:false,sleep_start_minute:0,slee
    if(process.env.CAPTURE_SCREENSHOTS==='1')await page.screenshot({path:path.join(root,'docs',`local-page-mock-${width}.png`),fullPage:false});
    console.log(`PASS local page ${width}px: fields, types, secrets, validation, save, commands, reset, overflow`);
    for(const route of ['network','device','radio','nodes','system']){await page.goto('http://esp32.test/'+route);await page.waitForFunction(()=>document.getElementById('feedback').textContent.startsWith('Ready.'));assert.equal(await page.locator('.esp-menu a[aria-current=page]').getAttribute('href'),'/'+route);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'no overflow on '+route);}
+   await page.goto('http://esp32.test/radio');
+   await page.getByText('The E220 did not answer the settings request.',{exact:false}).waitFor();
+   assert.equal(await page.locator('#overview').isVisible(),false);
+   radioReport={state:'READY_LINK_UNVERIFIED',error:'NONE',rf_receive_state:'RECEIVING',public_settings_read:true,rssi_dbm:-92,last_rf_peer:'ESP32-TESTPEER01',last_rf_age_ms:1200};
+   const inspected=page.waitForRequest(r=>r.method()==='POST'&&r.url().endsWith('/api/radio/inspect'));
+   await page.locator('#inspectRadioReadback').click();
+   await inspected;
+   await page.getByText('-92 dBm',{exact:true}).waitFor();
+   assert.equal(await page.getByText('Receiving authenticated LoRa packets',{exact:true}).count(),1);
    assert.deepEqual(errors,[]);console.log(`PASS sidebar navigation ${width}px: Network, Device, Radio, Nodes and System`);
    await ctx.close();
   }
