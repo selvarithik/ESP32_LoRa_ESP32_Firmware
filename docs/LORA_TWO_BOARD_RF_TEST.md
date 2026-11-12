@@ -27,3 +27,10 @@ Leave unmeasured items pending. A UART register read, UART transmit count or Gat
 - Gateway PING `CMD-90269D34A4B4` was dispatched and timed out without a device ACK or execution response. The last persisted Slave INA219 readings available during the test came from direct HTTP before the route was switched to Master-only.
 - The firmware source now clears the previous settings result after a persistent-write echo, waits for AUX and requests a fresh readback. This correction was built and tested in software. The running boards used the previous firmware and read the new persistent register values on their next boot.
 - The next physical check is a known-good 50-ohm conducted path with a measured signal at each receiving port. The E220 also has write-only radio key registers, so matching public settings do not establish matching radio keys. Inspect that commissioning history if the conducted path checks out.
+
+## Retest with the live single-file Gateway, 13 November 2026
+
+- Gateway health returned HTTP 200. Its MQTT worker connected and the saved LAN listener opened. Master COM10 initially reported a TLS failure. A restart recovered its existing MQTT connection and subscriptions, and the Gateway stored fresh Master bus voltage over MQTT.
+- Master control PING `CMD-72E3E9A9BBC2` and Slave PING `CMD-653ED4E1333E` both timed out without a device ACK or execution response after the reconnect. Fresh Master telemetry verifies the uplink during the retest. The control PING does not establish a working command downlink.
+- USB status still reported zero valid radio receives on both boards. Slave COM8 reported 15 AUX-low samples out of 49 while its transmit count increased by 17 UART fragments. This is module activity evidence. RF power at the far end of the cable remains unmeasured.
+- The last stored Slave bus and shunt readings were from direct HTTP before the conducted test. The radios remained active and the Slave remained Master-only for the bench.
