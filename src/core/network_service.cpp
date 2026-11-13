@@ -44,6 +44,7 @@ E220Core::Routes radioRoutes;String discoveredMaster;uint32_t radioPollAt=0,hell
 unsigned radioPeerIndex=0;
 uint32_t announcedBudgetDenials=0,budgetNoticeAt=0;
 Message slaveBudgetNotice;
+Message slaveConfigNotice;
 uint32_t heartbeatAt=0,telemetryAt=0,helloAt=0,pollAt=0,sequence=0,failed=0,duplicates=0;
 uint32_t sensorCheckedAt=0,diagnosticAt=0,recoveryHelloAt=0;
 String reportedRadioConfig;
@@ -204,6 +205,9 @@ void reportRadioBudget(uint32_t now){
     auto& c=configManager.get();
     if(!RadioTurn::due(now,budgetNoticeAt))return;
     budgetNoticeAt=now+5000;
+    if(c.role==DeviceRole::MASTER&&CanonicalMqtt::connected()&&!slaveConfigNotice.messageId.isEmpty()){
+        if(CanonicalMqtt::publish(slaveConfigNotice))slaveConfigNotice=Message{};
+    }
     if(c.role==DeviceRole::MASTER&&CanonicalMqtt::connected()&&!slaveBudgetNotice.messageId.isEmpty()){
         if(CanonicalMqtt::publish(slaveBudgetNotice))slaveBudgetNotice=Message{};
     }
@@ -558,6 +562,11 @@ void NetworkService::loop() {
             Peer* p=peer(m.source);if(!p)return;p->seen=now;
             if(radio&&((m.type==PacketType::STATUS&&body["radio_idle"]==true)||
                 (m.type==PacketType::HELLO&&body["radio_wire_version"]==3)))continue;
+            if(radio&&m.type==PacketType::STATUS&&body["radio_config"].is<JsonObject>()){
+                slaveConfigNotice=m;
+                slaveConfigNotice.destination=slaveConfigNotice.nextHop="GATEWAY";
+                continue;
+            }
             if(m.type==PacketType::TELEMETRY) {
                 if(!SensorTelemetry::valid(body.as<JsonObjectConst>()))return;
                 p->telemetry=m.payload;
