@@ -209,6 +209,10 @@ static void compactFrames(){
   f.kind=kind;f.source[0]=1;f.destination[0]=2;f.token=0x10203040;
   uint8_t raw[64]{},encoded[66]{};
   auto size=CompactRadio::pack(f,raw);
+  uint8_t expected[E220Core::Tag]{};
+  assert(CompactRadio::validTag(raw+size,expected));
+  raw[size+E220Core::Tag-1]^=1;
+  assert(!CompactRadio::validTag(raw+size,expected));
   assert(size==CompactRadio::Header+lengths[kind-1]);
   assert(CompactRadio::unpack(raw,size,decoded));
   assert(CompactRadio::addressed(decoded,f.source,f.destination));

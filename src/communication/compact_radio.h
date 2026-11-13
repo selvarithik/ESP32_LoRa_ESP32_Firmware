@@ -41,6 +41,11 @@ inline bool unpack(const uint8_t* raw,size_t len,Frame& f){
  memcpy(f.data,raw+22,n);
  return true;
 }
+inline bool validTag(const uint8_t* actual,const uint8_t* expected){
+ uint8_t different=0;
+ for(size_t i=0;i<E220Core::Tag;++i)different|=actual[i]^expected[i];
+ return different==0;
+}
 inline bool addressed(const Frame& frame,const uint8_t* source,const uint8_t* destination){
  return !memcmp(frame.source,source,6)&&!memcmp(frame.destination,destination,6);
 }

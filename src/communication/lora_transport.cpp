@@ -206,8 +206,7 @@ void receiveCompact(size_t n){
           !compactPeer(parent)||(radioTurn.busy()&&!radioTurn.expired(now)))return;
  const size_t len=n-E220Core::Tag;
  uint8_t signature[32];if(!tag(raw,len,signature)){++authFailures;return;}
- uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[len+i];
- if(diff){++authFailures;return;}
+ if(!CompactRadio::validTag(raw+len,signature)){++authFailures;return;}
  for(auto& item:seen)if(item.used&&now-item.at<E220Core::AssemblyLifetime&&item.transfer==f.token&&!memcmp(item.sender,f.source,6))return;
  Message m;
  if(rxReady||!compactMessage(f,m)){++rejected;return;}
