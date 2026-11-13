@@ -44,7 +44,8 @@ E220Core::Routes radioRoutes;String discoveredMaster;uint32_t radioPollAt=0,hell
 unsigned radioPeerIndex=0;
 uint32_t announcedBudgetDenials=0,budgetNoticeAt=0;
 Message slaveBudgetNotice;
-Message slaveConfigNotice;
+Message slaveConfigNotice,slaveMetricsNotice;
+uint32_t slaveMetricsAt=0;
 uint32_t heartbeatAt=0,telemetryAt=0,helloAt=0,pollAt=0,sequence=0,failed=0,duplicates=0;
 uint32_t sensorCheckedAt=0,diagnosticAt=0,recoveryHelloAt=0;
 String reportedRadioConfig;
@@ -205,6 +206,9 @@ void reportRadioBudget(uint32_t now){
     auto& c=configManager.get();
     if(!RadioTurn::due(now,budgetNoticeAt))return;
     budgetNoticeAt=now+5000;
+    if(c.role==DeviceRole::MASTER&&CanonicalMqtt::connected()&&!slaveMetricsNotice.messageId.isEmpty()){
+        if(CanonicalMqtt::publish(slaveMetricsNotice))slaveMetricsNotice=Message{};
+    }
     if(c.role==DeviceRole::MASTER&&CanonicalMqtt::connected()&&!slaveConfigNotice.messageId.isEmpty()){
         if(CanonicalMqtt::publish(slaveConfigNotice))slaveConfigNotice=Message{};
     }
@@ -521,6 +525,8 @@ void NetworkService::loop() {
         if(radio&&m.type==PacketType::HELLO&&m.source!="GATEWAY")radioRoutes.observe(m.source.c_str(),remote.substring(6).c_str(),m.radioHopCount,now);
         if(radio&&c.role==DeviceRole::NODE&&m.type==PacketType::HELLO){
             if(m.radioWireVersion==3||incomingBody["radio_wire_version"]==3){
+                if((!slaveMetricsAt||now-slaveMetricsAt>=3*RadioAirtime::PollIntervalMs)&&
+                   track(make(PacketType::STATUS,m.source,"{\"radio_metrics_report\":true}"),remote))slaveMetricsAt=now;
                 const String fingerprint=loraTransport.radioConfigFingerprint();
                 bool queued=false;
                 for(const auto& item:pending)if(item.used&&item.packet.payload=="{\"radio_config_report\":true}")queued=true;
@@ -562,6 +568,11 @@ void NetworkService::loop() {
             Peer* p=peer(m.source);if(!p)return;p->seen=now;
             if(radio&&((m.type==PacketType::STATUS&&body["radio_idle"]==true)||
                 (m.type==PacketType::HELLO&&body["radio_wire_version"]==3)))continue;
+            if(radio&&m.type==PacketType::STATUS&&body["radio_metrics"].is<JsonObject>()){
+                slaveMetricsNotice=m;
+                slaveMetricsNotice.destination=slaveMetricsNotice.nextHop="GATEWAY";
+                continue;
+            }
             if(radio&&m.type==PacketType::STATUS&&body["radio_config"].is<JsonObject>()){
                 slaveConfigNotice=m;
                 slaveConfigNotice.destination=slaveConfigNotice.nextHop="GATEWAY";
@@ -650,7 +661,8 @@ void NetworkService::loop() {
     for(auto& p:pending)if(p.used) {
         if(p.inFlight)continue;
         const bool retainedReply=p.host.startsWith("RADIO:")&&(p.command||p.packet.type==PacketType::ACK||
-            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO||p.packet.payload.indexOf("\"chat_id\"")>=0||p.packet.payload=="{\"radio_config_report\":true}");
+            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO||p.packet.payload.indexOf("\"chat_id\"")>=0||
+            p.packet.payload=="{\"radio_config_report\":true}"||p.packet.payload=="{\"radio_metrics_report\":true}");
         const bool chat=p.packet.payload.indexOf("\"chat_id\"")>=0;
         const uint32_t lifetime=chat?NodeChat::deliveryDeadline(RadioAirtime::PollIntervalMs):
             retainedReply?RadioAirtime::ReplyAssemblyMs:c.message_max_age_ms;
@@ -660,14 +672,16 @@ void NetworkService::loop() {
     }
     // Keep command traffic ahead of radio maintenance. A Slave gets one
     // reply per turn, so send ACK, result and registration before telemetry.
-    for(unsigned priority=0;priority<5;++priority)for(auto& p:pending)if(p.used) {
+    for(unsigned priority=0;priority<6;++priority)for(auto& p:pending)if(p.used) {
         const bool radio=p.host.startsWith("RADIO:");
         unsigned rank=0;
         if(radio&&c.role==DeviceRole::NODE){
             if(p.packet.type==PacketType::RESPONSE)rank=1;
             else if(p.packet.type==PacketType::HELLO)rank=2;
             else if(p.packet.type==PacketType::STATUS&&p.packet.payload.indexOf("\"chat_id\"")>=0)rank=3;
-            else if(p.packet.type!=PacketType::ACK)rank=4;
+            else if(p.packet.payload=="{\"radio_config_report\":true}"||
+                    p.packet.payload=="{\"radio_metrics_report\":true}")rank=4;
+            else if(p.packet.type!=PacketType::ACK)rank=5;
         }else if(radio&&!p.command)rank=p.packet.type==PacketType::ACK?1:2;
         if(rank!=priority)continue;
 #ifdef CONDUCTED_BENCH

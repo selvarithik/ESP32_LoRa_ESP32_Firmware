@@ -28,6 +28,7 @@ public:
  bool requestProbe(bool readOnly=true,uint8_t diagnosticPort=2);
 #ifdef CONDUCTED_BENCH
  bool requestBenchChannel(uint8_t channel);
+ bool benchRssiProbe();
 #endif
  String isolatedUartLoopback();
  bool powerSleep(bool sleep);

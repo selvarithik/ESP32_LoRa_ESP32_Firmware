@@ -3,7 +3,7 @@
 
 namespace CompactRadio {
 constexpr uint8_t Version=3;
-enum Kind:uint8_t {Register=1, Poll, Ping, Ack, Result, Ina219, Idle, Config, Text, TextReceipt};
+enum Kind:uint8_t {Register=1, Poll, Ping, Ack, Result, Ina219, Idle, Config, Text, TextReceipt, LinkMetrics};
 constexpr size_t Header=22;
 inline size_t payloadSize(uint8_t kind){
  switch(kind){
@@ -17,12 +17,13 @@ inline size_t payloadSize(uint8_t kind){
  case Config:return 6;
  case Text:return 29; // ID, byte count, 24 printable ASCII bytes.
  case TextReceipt:return 4;
+ case LinkMetrics:return 57;
  default:return SIZE_MAX;
  }
 }
 struct Frame {
  uint8_t kind=0;
- uint8_t source[6]{},destination[6]{},data[29]{};
+ uint8_t source[6]{},destination[6]{},data[57]{};
  uint32_t token=0;
 };
 inline size_t pack(const Frame& f,uint8_t* out){

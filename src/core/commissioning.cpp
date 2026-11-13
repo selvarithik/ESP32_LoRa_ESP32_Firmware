@@ -114,6 +114,8 @@ void dispatch(){
         if(d.size()!=3||d["confirm_device_id"].as<String>()!=c.device_id||d["confirm"].as<String>()!=confirmation){reply(false,"UART_ISOLATION_AND_IDENTITY_REQUIRED");return;}
         Serial.print("[COMMISSION] ");Serial.println(loraTransport.isolatedUartLoopback());
 #ifdef CONDUCTED_BENCH
+    }else if(op=="bench_rssi_probe"){
+        reply(d.size()==1&&loraTransport.benchRssiProbe(),"BENCH_RSSI_PROBE");
     }else if(op=="bench_radio_channel"){
         if(!d["channel"].is<uint8_t>()||d["channel"].is<bool>()||
            d["confirm"]!="CONDUCTED_ONLY"){reply(false,"BENCH_CONFIRMATION_REQUIRED");return;}

@@ -1,6 +1,7 @@
 #include "lora_transport.h"
 #include "e220_core.h"
 #include "compact_radio.h"
+#include "../protocol/packet.h"
 #include "../core/node_chat.h"
 #include <cmath>
 #include <time.h>
@@ -136,6 +137,26 @@ uint8_t compactKind(const Message& m,CompactRadio::Frame& f){
   return 0;
  }
  if(m.type==PacketType::HELLO){E220Core::put16(f.data,1);return Register;}
+ if(m.type==PacketType::STATUS&&d["radio_metrics_report"]==true){
+  const uint32_t now=millis(),used=airtime.used(now);
+  f.data[0]=hasRssi;f.data[1]=lastRssi;f.data[2]=signalCount;
+  int low=0,high=0,sum=0;
+  if(signalCount){
+   low=high=signalSamples[0];
+   for(unsigned i=0;i<signalCount;++i){
+    const int sample=signalSamples[i];
+    low=min(low,sample);high=max(high,sample);sum+=sample;
+   }
+  }
+  f.data[3]=low+141;f.data[4]=high+141;
+  E220Core::put16(f.data+5,uint16_t(int16_t(signalCount?sum*10/signalCount:0)));
+  const uint32_t values[]={now-lastRfRxAt,now-lastValidSignalAt,txCount,rxFragments,rxCount,
+   rejected,authFailures,protocolMismatches,budgetDenials,used,lastModeledUs,
+   RadioTurn::due(now,nextTx)?0:nextTx-now};
+  for(unsigned i=0;i<12;++i)E220Core::put32(f.data+7+4*i,values[i]);
+  f.data[55]=RadioAirtime::LimitUs==RadioAirtime::ProductionLimitUs?0:1;
+  return LinkMetrics;
+ }
  if(m.type==PacketType::STATUS&&d["radio_idle"]==true)return Idle;
  if(m.type==PacketType::STATUS&&d["radio_config_report"]==true&&observedValid){
   memcpy(f.data,settingsBytes+3,6);return Config;
@@ -215,6 +236,32 @@ bool compactMessage(const CompactRadio::Frame& f,Message& m){
    const float current=d["parameters"]["shunt_voltage"].as<float>()/resistance;
    d["parameters"]["current"]=current;d["parameters"]["power"]=d["parameters"]["bus_voltage"].as<float>()*current;
   }
+ }else if(f.kind==LinkMetrics){
+  if(f.data[0]>1||f.data[2]>20||f.data[55]>1)return false;
+  m.type=PacketType::STATUS;
+  d["device_id"]=sender;d["role"]="NODE";d["master_id"]=config.device_id;
+  d["bench_build"]=f.data[55]==1;
+  auto signal=d["radio_signal"].to<JsonObject>();
+  const bool valid=f.data[0]&&RadioRssi::available(f.data[1]);
+  signal["rssi_valid"]=valid;
+  if(f.data[0])signal["rssi_raw"]=f.data[1];else signal["rssi_raw"]=nullptr;
+  if(valid)signal["rssi_dbm"]=RadioRssi::dbm(f.data[1]);else signal["rssi_dbm"]=nullptr;
+  signal["valid_count"]=f.data[2];
+  signal["age_ms"]=E220Core::get32(f.data+7);
+  if(f.data[2]){
+   signal["min_dbm"]=int(f.data[3])-141;signal["max_dbm"]=int(f.data[4])-141;
+   signal["avg_dbm"]=int16_t(E220Core::get16(f.data+5))/10.0f;
+   signal["valid_age_ms"]=E220Core::get32(f.data+11);
+  }
+  auto metrics=d["radio_metrics"].to<JsonObject>();
+  const char* keys[]={"tx_fragments","rx_fragments","delivered","rejects","auth_failures",
+    "protocol_mismatches","budget_refusals","used_us","last_fragment_us","next_tx_gap_ms"};
+  for(unsigned i=0;i<10;++i)metrics[keys[i]]=E220Core::get32(f.data+15+4*i);
+  const uint32_t limit=f.data[55]?600000000:RadioAirtime::ProductionLimitUs;
+  metrics["limit_us"]=limit;
+  metrics["remaining_us"]=limit-min(limit,metrics["used_us"].as<uint32_t>());
+  metrics["poll_interval_ms"]=f.data[55]?60000:RadioAirtime::ProductionPollIntervalMs;
+  metrics["model_verified"]=false;
  }else if(f.kind==Config){
   uint8_t response[9]={0xc1,0,6};
   memcpy(response+3,f.data,6);
@@ -302,8 +349,22 @@ bool LoRaTransport::begin(const DeviceConfig& c){config=c;state=State::Off;error
 bool LoRaTransport::requestProbe(bool readOnly,uint8_t diagnosticPort){
  if((diagnosticPort!=1&&diagnosticPort!=2)||(!readOnly&&diagnosticPort!=2)){error="DIAGNOSTIC_UART_INVALID";return false;}if(!HardwareProfile::roleMatches(config.role==DeviceRole::MASTER)){error="BUILD_ROLE_MISMATCH";return false;}uint8_t configuredMac[6];if(!mac(config.device_id,configuredMac)||memcmp(configuredMac,ownMac,6)){error="IDENTITY_NOT_HARDWARE_MAC";return false;}if(state!=State::Off&&state!=State::Fault)return false;probeOnly=readOnly||!config.lora_enabled;if(config.lora_uart!=2||!HardwareProfile::radioUartPins(config.role==DeviceRole::MASTER,config.lora_rx_pin,config.lora_tx_pin)||config.lora_aux_pin!=HardwareProfile::RadioAux||config.lora_m0_pin!=HardwareProfile::RadioM0||config.lora_m1_pin!=HardwareProfile::RadioM1){error="UNVERIFIED_RADIO_PINS";return false;}if(!probeOnly&&config.mesh_key.length()<32){error="MESH_CREDENTIAL_REQUIRED";return false;}
  normalUart.end();diagnosticUart.end();useDiagnosticUart=diagnosticPort==1;
- pinMode(config.lora_aux_pin,INPUT);pinMode(config.lora_m0_pin,INPUT);pinMode(config.lora_m1_pin,INPUT);restoreHigh0=digitalRead(config.lora_m0_pin);restoreHigh1=digitalRead(config.lora_m1_pin);digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);pinMode(config.lora_m0_pin,OUTPUT);pinMode(config.lora_m1_pin,OUTPUT);probePinsConfigured=true;settingsQuerySent=false;settingsLength=0;settingsAttempts=0;settingsReader.reset();probePhase="WAIT_IDLE_AUX";radioUart().end();radioUart().setRxBufferSize(512);radioUart().setTxBufferSize(256);radioUart().begin(9600,SERIAL_8N1,config.lora_rx_pin,config.lora_tx_pin);gpio_pullup_en((gpio_num_t)config.lora_rx_pin);radioUart().setRxTimeout(2);radioUart().setRxFIFOFull(1);postWrite=false;observedValid=false;observed=E220Core::Settings{};state=State::WaitIdle;since=millis();auxSince=since;auxHigh=false;error="INSPECTING";return true;}
+ pinMode(config.lora_aux_pin,INPUT);pinMode(config.lora_m0_pin,INPUT);pinMode(config.lora_m1_pin,INPUT);restoreHigh0=digitalRead(config.lora_m0_pin);restoreHigh1=digitalRead(config.lora_m1_pin);digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);pinMode(config.lora_m0_pin,OUTPUT);pinMode(config.lora_m1_pin,OUTPUT);probePinsConfigured=true;settingsQuerySent=false;settingsLength=0;settingsAttempts=0;settingsReader.reset();probePhase="WAIT_IDLE_AUX";radioUart().end();radioUart().setRxBufferSize(512);radioUart().setTxBufferSize(256);radioUart().begin(9600,SERIAL_8N1,config.lora_rx_pin,config.lora_tx_pin);gpio_pullup_en((gpio_num_t)config.lora_rx_pin);postWrite=false;observedValid=false;observed=E220Core::Settings{};state=State::WaitIdle;since=millis();auxSince=since;auxHigh=false;error="INSPECTING";return true;}
 #ifdef CONDUCTED_BENCH
+bool LoRaTransport::benchRssiProbe(){
+ static bool attempted=false;
+ uint8_t parent[6];
+ if(attempted||isMaster()||bootQuiet||txCount||!initialized||
+    state!=State::Ready||!mac(config.master_id,parent))return false;
+ attempted=true;
+ Message probe=Packet::make(PacketType::STATUS,config.device_id,config.master_id,
+                           config.master_id,"{\"radio_idle\":true}",1);
+ const uint32_t now=millis();
+ rememberCompact(parent);compactReplyAllowed=true;
+ radioTurn.open(parent,1,now,now+RadioTurn::ReplyMs);
+ if(send(probe))return true;
+ radioTurn.clear();return false;
+}
 bool LoRaTransport::requestBenchChannel(uint8_t channel){
  if(channel<15||channel>17||(state!=State::Fault&&state!=State::Off))return false;
  if(!requestProbe(true))return false;

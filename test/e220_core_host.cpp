@@ -255,6 +255,23 @@ static void capturedV3Rssi(){
  check(captured0,sizeof(captured0),0);
  check(captured1,sizeof(captured1),0);
  check(captured2,sizeof(captured2),0);
+ const uint8_t isolated[]={0x04,0xe2,0x7a,0x03,0x02,0x07,0x0e,0x84,0x1f,0xe8,0x2a,0x2f,0x84,0x78,0x21,0x84,0x7d,0x77,0x10,0x01,0x01,0x01,0x11,0xb2,0x4b,0x0d,0x0b,0x9f,0xd7,0x40,0xce,0xeb,0x7d,0x0a,0x41,0xce,0x40,0x0d,0x13,0x00,0xdf};
+ for(size_t split=1;split<sizeof(isolated);++split){
+  E220Core::ReceiveStream stream;
+  unsigned frames=0,samples=0;
+  auto frame=[&](const uint8_t* bytes,size_t length){
+   uint8_t raw[64];
+   const size_t decoded=E220Core::cobsDecode(bytes,length,raw,sizeof(raw));
+   CompactRadio::Frame idle;
+   assert(decoded==CompactRadio::Header+E220Core::Tag);
+   assert(CompactRadio::unpack(raw,decoded-E220Core::Tag,idle)&&idle.kind==CompactRadio::Idle);
+   ++frames;return true;
+  };
+  auto rssi=[&](uint8_t value){assert(value==0xdf&&RadioRssi::dbm(value)==-33);++samples;};
+  for(size_t i=0;i<sizeof(isolated);++i)assert(stream.add(isolated[i],i<split?10:20,true,frame,rssi));
+  assert(frames==1&&samples==1);
+ }
+
  assert(!RadioRssi::available(114)&&RadioRssi::available(115)&&RadioRssi::available(245)&&!RadioRssi::available(246));
  assert(!RadioRssi::available(0)&&!RadioRssi::available(0xfe)&&RadioRssi::dbm(0xdf)==-33);
 }
