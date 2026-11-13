@@ -16,13 +16,14 @@ DeviceConfig config;
 enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Writing,Restoring,Ready,SleepSwitch,Sleeping,Fault};
 State state=State::Off;const char* error="DISABLED";bool initialized=false,probeOnly=false,restoreHigh0=false,restoreHigh1=false;
 bool probePinsConfigured=false,settingsQuerySent=false;const char* probePhase="NOT_STARTED";
-uint32_t since=0,auxSince=0,nextTx=0,rxAt=0,txStarted=0;bool auxHigh=false;
-E220Core::Settings observed;bool observedValid=false;uint8_t desiredBytes[6]{};bool wrote=false;unsigned registerWrites=0;int lastRssi=0;bool hasRssi=false,rxRssiPending=false,txAwake=false;uint32_t lastRfRxAt=0;uint32_t txAwakeAt=0;
+uint32_t since=0,auxSince=0,nextTx=0,txStarted=0;bool auxHigh=false;
+E220Core::Settings observed;bool observedValid=false;uint8_t desiredBytes[6]{};bool wrote=false;unsigned registerWrites=0;int lastRssi=0;bool hasRssi=false,txAwake=false;uint32_t lastRfRxAt=0;uint32_t txAwakeAt=0;
 uint8_t settingsBytes[9]{};unsigned settingsLength=0;E220Core::SettingsReader settingsReader;unsigned settingsAttempts=0;
 uint8_t ownMac[6]{},target[6]{},senderMac[6]{};uint32_t transfer=0,rxCount=0,txCount=0,rejected=0,timeouts=0,authFailures=0,completed=0;
 E220Core::Assembler assemblies;
-uint8_t encoded[202]{},raw[200]{},rxEncoded[202]{};size_t rxLength=0;
-uint8_t txData[E220Core::MaxMessage]{};size_t txLength=0;uint8_t txPart=0;String txId,lastSender,resultId;bool resultOk=false,hasResult=false,rxReady=false,skipRssi=false;
+uint8_t encoded[202]{},raw[200]{};
+E220Core::ReceiveStream rxStream;
+uint8_t txData[E220Core::MaxMessage]{};size_t txLength=0;uint8_t txPart=0;String txId,lastSender,resultId;bool resultOk=false,hasResult=false,rxReady=false;
 Message received;
 struct Seen {uint8_t sender[6]{};uint32_t transfer=0,crc=0,at=0;bool used=false;};Seen seen[32];uint8_t seenNext=0;
 bool mac(const String& id,uint8_t* out){if(id=="BROADCAST"){memset(out,255,6);return true;}if(id.length()==18&&id.startsWith("ESP32-")){for(int i=0;i<6;++i){String piece=id.substring(6+(5-i)*2,8+(5-i)*2);char* end=nullptr;unsigned n=strtoul(piece.c_str(),&end,16);if(!end||*end)return false;out[i]=n;}return true;}unsigned values[6];char extra;if(sscanf(id.c_str(),"%2x:%2x:%2x:%2x:%2x:%2x%c",&values[0],&values[1],&values[2],&values[3],&values[4],&values[5],&extra)!=6||id.length()!=17)return false;for(int i=0;i<6;++i)out[i]=values[i];return true;}
@@ -32,7 +33,7 @@ bool matches(){return observed.baud==config.lora_baud&&observed.address==(uint16
 void restore(const char* reason){error=reason;digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);radioUart().updateBaudRate(config.lora_baud);state=State::Restoring;since=millis();initialized=false;}
 size_t pack(const Message& m,uint8_t* out){JsonDocument payload,doc;if(deserializeJson(payload,m.payload)||!payload.is<JsonObject>())return 0;auto a=doc.to<JsonArray>();a.add(m.protocolVersion);a.add(m.typeString());a.add(m.ttl);a.add(m.timestamp);a.add(m.sequence);a.add(m.messageId);a.add(m.source);a.add(m.destination);a.add(m.nextHop);a.add(m.origin.isEmpty()?m.source:m.origin);a.add(m.correlationId);a.add(payload.as<JsonVariant>());a.add(m.radioHopCount+1);a.add(m.radioMaxHops?m.radioMaxHops:m.ttl);size_t n=measureMsgPack(doc);return n<=E220Core::MaxMessage?serializeMsgPack(doc,out,E220Core::MaxMessage):0;}
 bool unpack(const uint8_t* bytes,size_t n,Message& m){JsonDocument d;if(deserializeMsgPack(d,bytes,n)||!d.is<JsonArray>()||d.size()!=14)return false;auto a=d.as<JsonArray>();if(!a[0].is<uint8_t>()||!a[1].is<const char*>()||!a[2].is<uint8_t>()||!a[3].is<uint32_t>()||!a[4].is<uint32_t>()||!a[11].is<JsonObject>()||!a[12].is<uint8_t>()||!a[13].is<uint8_t>()||a[12].as<unsigned>()<1||a[13].as<unsigned>()>15||a[12].as<unsigned>()>a[13].as<unsigned>())return false;for(unsigned i=5;i<11;++i)if(!a[i].is<const char*>()||a[i].as<String>().length()>48)return false;Message p;p.protocolVersion=a[0];p.type=packetTypeFromString(a[1]);p.ttl=a[2];p.timestamp=a[3];p.sequence=a[4];p.messageId=a[5].as<String>();p.source=a[6].as<String>();p.destination=a[7].as<String>();p.nextHop=a[8].as<String>();p.origin=a[9].as<String>();p.correlationId=a[10].as<String>();serializeJson(a[11],p.payload);if(!Message::fromJson(p.toJson(),m))return false;m.radioHopCount=a[12];m.radioMaxHops=a[13];return true;}
-void receiveFrame(){size_t n=E220Core::cobsDecode(rxEncoded,rxLength,raw,sizeof(raw));if(n<=E220Core::Header+E220Core::Tag){++rejected;return;}uint8_t signature[32];size_t body=n-E220Core::Tag;if(!tag(raw,body,signature)){++authFailures;return;}uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[body+i];if(diff){++authFailures;return;}E220Core::Fragment f;if(!E220Core::parse(raw,body,f)){++rejected;return;}uint8_t broadcast[6];memset(broadcast,255,6);if(memcmp(f.target,ownMac,6)&&memcmp(f.target,broadcast,6))return;if(!memcmp(f.sender,ownMac,6))return;
+void receiveFrame(const uint8_t* encoded,size_t length){size_t n=E220Core::cobsDecode(encoded,length,raw,sizeof(raw));if(n<=E220Core::Header+E220Core::Tag){++rejected;return;}uint8_t signature[32];size_t body=n-E220Core::Tag;if(!tag(raw,body,signature)){++authFailures;return;}uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[body+i];if(diff){++authFailures;return;}E220Core::Fragment f;if(!E220Core::parse(raw,body,f)){++rejected;return;}uint8_t broadcast[6];memset(broadcast,255,6);if(memcmp(f.target,ownMac,6)&&memcmp(f.target,broadcast,6))return;if(!memcmp(f.sender,ownMac,6))return;
  for(auto& item:seen)if(item.used&&millis()-item.at<E220Core::AssemblyLifetime&&item.transfer==f.transfer&&!memcmp(item.sender,f.sender,6)){return;}
  auto* message=assemblies.add(f,millis());if(!message)return;
  Message parsed;if(!rxReady&&unpack(message->data,message->total,parsed)){received=parsed;lastSender=identity(f.sender);memcpy(senderMac,f.sender,6);rxReady=true;lastRfRxAt=millis();hasRssi=false;++rxCount;auto& item=seen[seenNext++%32];item.used=true;item.transfer=f.transfer;item.crc=f.crc;item.at=millis();memcpy(item.sender,f.sender,6);}else ++rejected;message->used=false;
@@ -67,8 +68,17 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
  if(state==State::Restoring){if(high&&now-since>=5&&now-auxSince>=2){if(!strcmp(error,"STARTING_NORMAL_MODE")){state=State::Ready;initialized=true;error="NONE";logger.info("LORA","Read-only settings check passed; normal mode ready (hardware link unverified)");}else{state=State::Fault;radioUart().end();}}else if(now-since>3000){state=State::Fault;radioUart().end();error="MODE_RESTORE_TIMEOUT";++timeouts;}return;}
  if(state!=State::Ready)return;
  if(txAwake&&config.lora_work_mode=="WOR_RX"&&idle()&&now-txAwakeAt>3000&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,HIGH);txAwake=false;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
- assemblies.expire(now);if(rxLength&&now-rxAt>1000){rxLength=0;++rejected;}
- for(unsigned budget=0;budget<256&&radioUart().available();++budget){uint8_t b=radioUart().read();rxAt=now;if(skipRssi){skipRssi=false;if(rxRssiPending){lastRssi=int(b)-256;hasRssi=true;}rxRssiPending=false;continue;}if(!b){if(rxLength){const uint32_t before=rxCount;receiveFrame();rxLength=0;skipRssi=observed.rssi;rxRssiPending=skipRssi&&rxCount!=before;}}else if(rxLength<sizeof(rxEncoded))rxEncoded[rxLength++]=b;else{rxLength=0;++rejected;}}
+ assemblies.expire(now);
+ if(rxStream.expire(now))++rejected;
+ for(unsigned budget=0;budget<256&&radioUart().available();++budget){
+  if(!rxStream.add(radioUart().read(),now,observed.rssi,
+   [](const uint8_t* bytes,size_t length){
+    const uint32_t before=rxCount;
+    receiveFrame(bytes,length);
+    return rxCount!=before;
+   },
+   [](int rssi){lastRssi=rssi;hasRssi=true;}))++rejected;
+ }
  if(txLength&&now-txStarted>config.message_max_age_ms){txLength=0;hasResult=true;resultId=txId;resultOk=false;error=high?"MESSAGE_TX_EXPIRED":"AUX_BUSY_TIMEOUT";++timeouts;}
  if(!txLength||!high||now-auxSince<2||(int32_t)(now-nextTx)<0)return;
  uint8_t step=E220Core::span(observed.packet);size_t n=E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw);uint8_t signature[32];if(!n||!tag(raw,n,signature)){txLength=0;return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){txLength=0;++rejected;return;}size_t prefix=observed.fixed?3:0;if(radioUart().availableForWrite()<int(n+prefix))return;if(prefix){uint8_t address[]={255,255,observed.channel};radioUart().write(address,3);}if(radioUart().write(encoded,n)!=n){txLength=0;++timeouts;return;}++txCount;++txPart;

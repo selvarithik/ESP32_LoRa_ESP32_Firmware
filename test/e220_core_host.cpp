@@ -6,6 +6,65 @@
 #include <algorithm>
 #include <random>
 
+static void capturedRssiFraming() {
+ // Verbatim payload and RSSI bytes from the two conducted bench captures.
+ // The captured probes were ASCII. Wrap only their payloads in offline RV1
+ // fragments, then append the original module RSSI byte after the COBS zero.
+ const uint8_t captures[][7]={{0x70,0x69,0x6e,0x67,0x30,0x31,0xdf},
+                              {0x70,0x69,0x6e,0x67,0x30,0x32,0xe0}};
+ const uint8_t sender[6]={1,2,3,4,5,6},target[6]={6,5,4,3,2,1};
+ std::vector<uint8_t> wire[2];
+ for(unsigned i=0;i<2;++i){
+  uint8_t raw[200]{},encoded[202]{};
+  size_t length=E220Core::fragment(captures[i],6,i+1,sender,target,152,0,raw);
+  assert(length==E220Core::Header+6);
+  // The native callback checks the framing boundary and fragment payload.
+  // HMAC generation and validation remain in the hardware driver.
+  memset(raw+length,0xa5,E220Core::Tag);
+  size_t size=E220Core::cobsEncode(raw,length+E220Core::Tag,encoded,sizeof(encoded));
+  assert(size&&encoded[size-1]==0);
+  wire[i].assign(encoded,encoded+size);
+  wire[i].push_back(captures[i][6]);
+ }
+ for(unsigned scenario=0;scenario<4;++scenario){
+  E220Core::ReceiveStream stream;
+  unsigned frames=0;
+  std::vector<int> signals;
+  auto frame=[&](const uint8_t* encoded,size_t size){
+   assert(frames<2);
+   uint8_t raw[200]{};
+   const size_t length=E220Core::cobsDecode(encoded,size,raw,sizeof(raw));
+   assert(length==E220Core::Header+6+E220Core::Tag);
+   E220Core::Fragment decoded;
+   assert(E220Core::parse(raw,length-E220Core::Tag,decoded));
+   assert(decoded.transfer==frames+1&&decoded.length==6&&!memcmp(decoded.bytes,captures[frames],6));
+   ++frames;
+   return true;
+  };
+  auto signal=[&](int value){signals.push_back(value);};
+  auto feed=[&](unsigned index,size_t first,size_t end,uint32_t now){
+   for(size_t i=first;i<end;++i)assert(stream.add(wire[index][i],now,true,frame,signal));
+  };
+  const size_t end=wire[0].size();
+  if(scenario==1){
+   feed(0,0,end-1,10);
+   assert(frames==1&&signals.empty());
+   feed(0,end-1,end,11);
+  }else if(scenario==2){
+   feed(0,0,end/2,10);
+   assert(frames==0&&signals.empty());
+   feed(0,end/2,end,11);
+  }else{
+   feed(0,0,end,10);
+   if(scenario==3)feed(1,0,wire[1].size(),10);
+  }
+  assert(frames==(scenario==3?2U:1U));
+  assert(signals.size()==frames&&signals[0]==-33);
+  if(scenario==3)assert(signals[1]==-32);
+ }
+ puts("PASS production UART framing: captured RSSI same burst, delayed, split frame and back to back");
+}
+
 static void simulatedTwoBoardBench() {
  std::mt19937 random(0xE220);
  const uint8_t boards[2][6]={{0x78,0x21,0x84,0x7d,0x77,0x10},{0x84,0x1f,0xe8,0x2a,0x2f,0x84}};
@@ -92,6 +151,7 @@ int main(){
  E220Core::Routes routes;assert(routes.observe("ESP32-010203040506","ESP32-060504030201",1,0));assert(routes.find("ESP32-010203040506",59999,60000));assert(!routes.find("ESP32-010203040506",60001,60000));routes.expire(60001,60000);assert(!routes.rows[0].destination[0]);assert(!routes.observe("bad id","peer",1,0));
  assert(E220Core::forwardAllowed(3,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(1,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,4,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,1,4,"RADIO:same","RADIO:same"));
  assert(routes.observe("target","direct",1,0));assert(routes.observe("target","relay",2,1));assert(!strcmp(routes.find("target",2,60000)->nextHop,"direct"));
+ capturedRssiFraming();
  simulatedTwoBoardBench();
  puts("PASS production E220 settings/stream resync, COBS 500 vectors, all subpacket sizes, reassembly, duplicates, bounds, expiry, routes and role safety");
 }
