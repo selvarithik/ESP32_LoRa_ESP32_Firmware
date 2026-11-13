@@ -1,0 +1,30 @@
+# Conducted E220 operating manual
+
+## Bench setup
+
+Use the two E220-900T22D antenna ports through an SMA cable and at least 30 dB total attenuation. Keep both ports terminated and remove radiating antennas. Verify the bench profile on both units before the first transmission.
+
+| Signal | Master ESP32 | Slave ESP32 |
+| --- | --- | --- |
+| E220 TXD to ESP32 RX | GPIO32 | GPIO16 |
+| E220 RXD from ESP32 TX | GPIO33 | GPIO17 |
+| E220 M0 / M1 / AUX | GPIO25 / GPIO26 / GPIO27 | GPIO25 / GPIO26 / GPIO27 |
+| Common ground | GND | GND |
+
+Read and preserve the actual application slots and data partitions. On the November 13 test boards, COM8 Slave used OTA0 at `0x100000` and COM10 Master used app0 at `0x10000`. Other boards may differ. Build with `pio run -e CONDUCTED_BENCH` and write only the verified active app partition. Boot Slave first. Confirm the bench banner, 15 s holdoff, zero transmissions during holdoff, and the public register reply `C1 00 06 00 00 62 03 10 83` on each board.
+
+The bench profile is CH 16 (866.125 MHz), 10 dBm, 2.4k, transparent mode, packet RSSI enabled, ambient RSSI and LBT disabled. For readback, use M0=M1=1, 9600 8N1, and `C1 00 06`. The firmware allows three retries for an empty response. After an authorized write, wait for an AUX rising edge and at least 500 ms before reading back. The crypt key is write-only. Web radio setup is read-only. A bench USB request `{"op":"bench_radio_channel","channel":16,"confirm":"CONDUCTED_ONLY"}` is accepted only with the driver stopped or faulted. The request allows channels 15–17 and requires the read-back profile to remain at 10 dBm and 2.4k. The conducted run uses CH 16. The command keeps the driver stopped after verification. To inspect ambient noise separately, the E220 manual describes REG1 bit 5 and the local noise-register query. The bench profile leaves that bit off.
+
+## Protocol and airtime
+
+The Master grants addressed turns and the Slave only replies on a valid turn. The compact v3 header contains magic, version, kind, source/destination MACs and a 32-bit poll token. Payloads carry a capability bitmap (registration), a registration flag (poll), a command ID and time (PING), command ID and state (ACK), or command ID, outcome and duration (response). INA219 carries sample time, scaled bus and shunt voltage, and shunt resistance. Config carries six public E220 register bytes. The 128-bit HMAC authenticates the header and payload. COBS supplies a delimiter. The optional RSSI trailer comes from the receiving radio and lies outside the authenticated frame.
+
+The planning model assumes SF11, 125 kHz, CR 4/8, explicit header, PHY CRC, low-data-rate optimization and an 8-symbol preamble. It counts encoded bytes and a 16-byte allowance for module overhead. Use the `[BENCH TX]` log for counts and modeled airtime. The conducted build uses a 60 s polling interval, 600 s/hour budget, 20 s per-board transmit gap and 30 transmissions per boot. The production environment uses a 30 minute poll interval, a 36 s/hour rolling limit and a boot holdoff of 60 minutes plus 15 seconds. A reboot clears the in-memory ledger.
+
+## Gateway and recovery
+
+Use the existing Gateway sign-in and open LoRa Mesh Monitor on the trusted LAN. Public configuration projections and received signal fields also appear in `/api/operations/overview`. The existing MQTT status envelope carries `radio_config` and `radio_signal` when reported. Existing MQTT telemetry carries the INA219 readings. Radio channel and power flags are advisory. If the device clock remains at uptime, an authorized USB operator can provide current Unix time using the existing `time` command and verify TLS certificate validation before testing a Gateway PING.
+
+A missing ACK can occur before LoRa if the Master lacks a verified MQTT connection. Compare the Gateway command timeline with Master TX and Slave RX logs. A successful ACK is distinct from an execution result. Confirm a fresh INA219 reading by matching the Slave identity, RF frame and Gateway ingest timestamp. If the register read is empty, check AUX and mode-pin timing. If link frames arrive but auth failures increase, compare the application HMAC provisioning and examine the radio key history. If registration stalls, check fragments and the per-turn cap. Raw values FF and FE are retained as received and displayed as n/a. The cause of those values remains unconfirmed.
+
+To restore production later, build the supported production environment for the board, verify its image fits the current application partition, back up flash and write only the verified application slot. Restore any planned RF profile separately under applicable approvals. Real RF airtime, occupied bandwidth, WPC category and type approval, over-the-air operation, and radio key persistence remain unverified.

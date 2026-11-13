@@ -43,3 +43,7 @@ Radio defaults disabled pending read-only module settings inspection and safe ph
 commissioning. Cloud runtime starts paused. No board upload or production broker test
 is part of build verification. See docs/SHARED_FIRMWARE_REPORT.md and
  docs/CLOUD_PREPARATION.md for current status and the staged hardware test sequence.
+
+## Conducted E220 release
+
+See [the operating manual](docs/MANUAL.md) for wiring, configuration readback, protocol, airtime assumptions, Gateway diagnostics and restoring production. See [the reference review](docs/REFERENCE_REVIEW.md) for upstream license and implementation notes.
