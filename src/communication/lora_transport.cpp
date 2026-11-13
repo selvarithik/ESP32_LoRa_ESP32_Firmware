@@ -69,7 +69,8 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
  if(state!=State::Ready)return;
  if(txAwake&&config.lora_work_mode=="WOR_RX"&&idle()&&now-txAwakeAt>3000&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,HIGH);txAwake=false;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
  assemblies.expire(now);
- if(rxStream.expire(now))++rejected;
+ const auto signal=[](int rssi){lastRssi=rssi;hasRssi=true;};
+ if(rxStream.expire(now,signal))++rejected;
  for(unsigned budget=0;budget<256&&radioUart().available();++budget){
   if(!rxStream.add(radioUart().read(),now,observed.rssi,
    [](const uint8_t* bytes,size_t length){
@@ -77,7 +78,7 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
     receiveFrame(bytes,length);
     return rxCount!=before;
    },
-   [](int rssi){lastRssi=rssi;hasRssi=true;}))++rejected;
+   signal))++rejected;
  }
  if(txLength&&now-txStarted>config.message_max_age_ms){txLength=0;hasResult=true;resultId=txId;resultOk=false;error=high?"MESSAGE_TX_EXPIRED":"AUX_BUSY_TIMEOUT";++timeouts;}
  if(!txLength||!high||now-auxSince<2||(int32_t)(now-nextTx)<0)return;

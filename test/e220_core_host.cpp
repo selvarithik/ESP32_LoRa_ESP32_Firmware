@@ -26,15 +26,15 @@ static void capturedRssiFraming() {
   wire[i].assign(encoded,encoded+size);
   wire[i].push_back(captures[i][6]);
  }
- for(unsigned scenario=0;scenario<4;++scenario){
+ for(unsigned scenario=0;scenario<8;++scenario){
   E220Core::ReceiveStream stream;
-  unsigned frames=0;
+  unsigned frames=0,rejects=0;
   std::vector<int> signals;
   auto frame=[&](const uint8_t* encoded,size_t size){
    assert(frames<2);
    uint8_t raw[200]{};
    const size_t length=E220Core::cobsDecode(encoded,size,raw,sizeof(raw));
-   assert(length==E220Core::Header+6+E220Core::Tag);
+   if(length!=E220Core::Header+6+E220Core::Tag){++rejects;return false;}
    E220Core::Fragment decoded;
    assert(E220Core::parse(raw,length-E220Core::Tag,decoded));
    assert(decoded.transfer==frames+1&&decoded.length==6&&!memcmp(decoded.bytes,captures[frames],6));
@@ -43,7 +43,7 @@ static void capturedRssiFraming() {
   };
   auto signal=[&](int value){signals.push_back(value);};
   auto feed=[&](unsigned index,size_t first,size_t end,uint32_t now){
-   for(size_t i=first;i<end;++i)assert(stream.add(wire[index][i],now,true,frame,signal));
+   for(size_t i=first;i<end;++i)if(!stream.add(wire[index][i],now,true,frame,signal))++rejects;
   };
   const size_t end=wire[0].size();
   if(scenario==1){
@@ -54,15 +54,30 @@ static void capturedRssiFraming() {
    feed(0,0,end/2,10);
    assert(frames==0&&signals.empty());
    feed(0,end/2,end,11);
-  }else{
+  }else if(scenario<4){
    feed(0,0,end,10);
    if(scenario==3)feed(1,0,wire[1].size(),10);
+  }else{
+   auto add=[&](uint8_t b){if(!stream.add(b,10,true,frame,signal))++rejects;};
+   feed(0,0,end-1,10);
+   if(scenario==5){add(0xdf);add(0x55);}
+   if(scenario==6){
+    add(0xdf);
+    add(0x07);add(0x11);add(0);add(0xe1); // Bad COBS run length, then its RSSI.
+   }
+   if(scenario==7)add(0);
+   feed(1,0,wire[1].size(),10);
   }
-  assert(frames==(scenario==3?2U:1U));
-  assert(signals.size()==frames&&signals[0]==-33);
-  if(scenario==3)assert(signals[1]==-32);
+  assert(frames==(scenario>=3?2U:1U));
+  assert(rejects==(scenario>=4&&scenario<=6?1U:0U));
+  if(scenario==4)assert(signals.size()==1&&signals[0]==-32);
+  else{
+   assert(signals.size()==frames&&signals[0]==(scenario==7?-256:-33));
+   if(frames==2)assert(signals[1]==-32);
+  }
  }
  puts("PASS production UART framing: captured RSSI same burst, delayed, split frame and back to back");
+ puts("PASS production UART resync: missing RSSI, stray byte, malformed COBS, and RSSI 0x00");
 }
 
 static void simulatedTwoBoardBench() {

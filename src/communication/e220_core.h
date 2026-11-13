@@ -17,34 +17,60 @@ inline size_t cobsEncode(const uint8_t* in,size_t n,uint8_t* out,size_t cap){if(
 inline size_t cobsDecode(const uint8_t* in,size_t n,uint8_t* out,size_t cap){size_t r=0,w=0;while(r<n){uint8_t code=in[r++];if(!code||r+code-1>n)return 0;for(unsigned i=1;i<code;++i){if(w>=cap||!in[r])return 0;out[w++]=in[r++];}if(code!=255&&r<n){if(w>=cap)return 0;out[w++]=0;}}return w;}
 // E220 appends one raw RSSI byte after each COBS-delimited UART frame.
 class ReceiveStream {
- uint8_t encoded[202]{};
+ uint8_t encoded[204]{};
  size_t length=0;
  uint32_t lastByteAt=0;
- bool skipRssi=false, reportRssi=false;
+ bool skipRssi=false, reportRssi=false, possibleStart=false, overflow=false;
+ // The reserved zero in the RV1 header terminates the first COBS block.
+ static bool startsFrame(const uint8_t* bytes,size_t size) {
+  return size>=4&&bytes[0]==4&&bytes[1]==0xe2&&bytes[2]==0x7a&&bytes[3]==1;
+ }
 public:
- bool expire(uint32_t now) {
-  if(!length||now-lastByteAt<=1000)return false;
+ template<class Signal>
+ bool expire(uint32_t now,Signal signal) {
+  if(now-lastByteAt<=1000)return false;
+  if(possibleStart&&length==1&&reportRssi)signal(4-256);
+  const bool rejected=skipRssi||overflow||length>size_t(possibleStart);
   length=0;
-  return true;
+  skipRssi=reportRssi=possibleStart=overflow=false;
+  return rejected;
  }
  template<class Frame,class Signal>
  bool add(uint8_t byte,uint32_t now,bool rssiEnabled,Frame frame,Signal signal) {
   lastByteAt=now;
   if(skipRssi){
    skipRssi=false;
+   // RSSI 0x04 can also be the start of the next frame if RSSI was lost.
+   if(byte==4){encoded[length++]=byte;possibleStart=true;return true;}
    if(reportRssi)signal(int(byte)-256);
    reportRssi=false;
    return true;
   }
   if(!byte){
-   if(length){
-    const bool accepted=frame(encoded,length);
-    length=0;
-    skipRssi=rssiEnabled;
-    reportRssi=skipRssi&&accepted;
+   bool rejected=overflow;
+   size_t start=0;
+   if(possibleStart){
+    if(startsFrame(encoded,length))rejected=true;
+    else{
+     if(reportRssi)signal(4-256);
+     start=1;
+    }
    }
-  }else if(length<sizeof(encoded))encoded[length++]=byte;
-  else{length=0;return false;}
+   if(!overflow&&!startsFrame(encoded+start,length-start)&&
+      length>start&&startsFrame(encoded+start+1,length-start-1)){
+    ++start;
+    rejected=true;
+   }
+   const bool hasFrame=length>start||overflow;
+   const bool accepted=hasFrame&&!overflow&&frame(encoded+start,length-start);
+   skipRssi=rssiEnabled&&hasFrame;
+   reportRssi=skipRssi&&accepted;
+   length=0;
+   possibleStart=overflow=false;
+   return !rejected&&hasFrame;
+  }
+  if(length<sizeof(encoded))encoded[length++]=byte;
+  else overflow=true;
   return true;
  }
 };
