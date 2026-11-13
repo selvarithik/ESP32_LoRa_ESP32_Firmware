@@ -433,7 +433,12 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
    txLength=0;
    radioTurn.open(target,transfer,now,nextTx+RadioTurn::ReplyMs);
    masterWaiting=true;partialReply=false;
-  }else finishSend(true);
+  }else{
+   // Once a full reply is queued, keep duplicate protection in seen[].
+   // A valid new turn may arrive before the old reply window expires.
+   radioTurn.clear();
+   finishSend(true);
+  }
  }else if(!isMaster()&&!RadioAirtime::slotAllows(slotFragments,RadioAirtime::MaxReplyFragments))replyPaused=true;
 }
 bool LoRaTransport::send(const Message& m){
