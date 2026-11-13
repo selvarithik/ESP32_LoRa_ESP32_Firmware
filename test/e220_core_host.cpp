@@ -6,6 +6,46 @@
 #include <algorithm>
 #include <random>
 #include "../src/communication/radio_turn.h"
+#include "../src/communication/radio_airtime.h"
+
+static void rollingAirtimeAndFragmentCap(){
+ using namespace RadioAirtime;
+ static_assert(WorstFragmentUs==6754304&&WorstPollUs==13508608&&WorstReplyUs==13508608,"Unexpected airtime model");
+ static_assert(ExchangesPerHour==2&&PollIntervalMs==1800000&&BootQuietMs>=HourMs,"Unsafe cadence");
+ const uint32_t start=UINT32_MAX-2000;
+ Budget budget;
+ for(unsigned i=0;i<5;++i){ // Discovery, original poll, two retries and a reply fragment use the same ledger API.
+  assert(budget.debit(start+i,MaxUartBytes+FixedAddressBytes,10));
+ }
+ assert(budget.used(start+9)==5*WorstFragmentUs);
+ assert(!budget.debit(start+9,MaxUartBytes+FixedAddressBytes,10));
+ assert(budget.used(start+HourMs+9)==5*WorstFragmentUs);
+ assert(budget.used(start+HourMs+10)==4*WorstFragmentUs);
+ assert(budget.debit(start+HourMs+10,MaxUartBytes+FixedAddressBytes,10));
+ assert(budget.used(start+HourMs+14)==WorstFragmentUs);
+
+ E220Core::Assembler receiver;
+ const uint8_t sender[6]={1},target[6]={2},payload[]={1,2,3,4,5};
+ uint8_t raw[200]{},wire[202]{};
+ unsigned next=0;
+ for(uint32_t turn=1;turn<=3;++turn){
+  unsigned sent=0;
+  const uint32_t now=turn*PollIntervalMs;
+  while(next<sizeof(payload)&&slotAllows(sent,MaxReplyFragments)){
+   const size_t n=E220Core::fragment(payload,sizeof(payload),42,sender,target,1,next++,raw,turn);
+   const size_t wireBytes=E220Core::cobsEncode(raw,n+E220Core::Tag,wire,sizeof(wire));
+   assert(wireBytes==E220Core::Header+1+E220Core::Tag+2);
+   E220Core::Fragment fragment;
+   assert(E220Core::parse(raw,n,fragment)&&fragment.turn==turn&&fragment.transfer==42);
+   auto* message=receiver.add(fragment,now,ReplyAssemblyMs);
+   if(next==sizeof(payload))assert(message&&!memcmp(message->data,payload,sizeof(payload)));
+   else assert(!message);
+   ++sent;
+  }
+  assert(sent==(turn<3?2U:1U));
+ }
+ puts("PASS rolling airtime: discovery/retry charges, refusal, expiry and clock rollover, budget-derived cadence and capped reply continuation");
+}
 
 static void masterPolledTurns(){
  const uint8_t master[6]={1,2,3,4,5,6},slave[6]={6,5,4,3,2,1};
@@ -37,7 +77,7 @@ static void masterPolledTurns(){
 
 static void capturedRssiFraming() {
  // Verbatim payload and RSSI bytes from the two conducted bench captures.
- // The captured probes were ASCII. Wrap only their payloads in offline RV1
+ // The captured probes were ASCII. Wrap only their payloads in offline RV2
  // fragments, then append the original module RSSI byte after the COBS zero.
  const uint8_t captures[][7]={{0x70,0x69,0x6e,0x67,0x30,0x31,0xdf},
                               {0x70,0x69,0x6e,0x67,0x30,0x32,0xe0}};
@@ -186,7 +226,9 @@ int main(){
  uint8_t sender[6]={1,2,3,4,5,6},target[6]={6,5,4,3,2,1};
  for(unsigned packet: {64U,128U,200U})for(unsigned length:{1U,16U,152U,512U,2048U,3072U}){
   std::vector<uint8_t> input(length);for(unsigned i=0;i<length;++i)input[i]=i%251;
-  uint8_t step=E220Core::span(packet),raw[220]{},encoded[222]{};unsigned count=(length+step-1)/step;assert(count<=255);E220Core::Assembler assembly;E220Core::Assembly* done=nullptr;
+  uint8_t step=E220Core::span(packet),raw[220]{},encoded[222]{};unsigned count=(length+step-1)/step;
+  if(count>255){assert(!E220Core::fragment(input.data(),length,17,sender,target,step,0,raw));continue;}
+  E220Core::Assembler assembly;E220Core::Assembly* done=nullptr;
   for(int part=count-1;part>=0;--part){size_t n=E220Core::fragment(input.data(),length,17,sender,target,step,part,raw);assert(n);size_t wire=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));assert(wire<=packet);E220Core::Fragment f;assert(E220Core::parse(raw,n,f));auto result=assembly.add(f,100);if(result)done=result;if(part>0){assert(!assembly.add(f,100));}}
   assert(done&&done->total==length&&!memcmp(done->data,input.data(),length));assert(!E220Core::span(32));
  }
@@ -197,6 +239,7 @@ int main(){
  assert(routes.observe("target","direct",1,0));assert(routes.observe("target","relay",2,1));assert(!strcmp(routes.find("target",2,60000)->nextHop,"direct"));
  capturedRssiFraming();
  masterPolledTurns();
+ rollingAirtimeAndFragmentCap();
  simulatedTwoBoardBench();
  puts("PASS production E220 settings/stream resync, COBS 500 vectors, all subpacket sizes, reassembly, duplicates, bounds, expiry, routes and role safety");
 }

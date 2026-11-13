@@ -5,7 +5,7 @@
 #include "../protocol/packet_validation_core.h"
 #include "radio_rssi.h"
 namespace E220Core {
-constexpr size_t MaxMessage=3072,Header=30,Tag=16,MaxFrame=200;
+constexpr size_t MaxMessage=3072,Header=34,Tag=16,MaxFrame=200;
 constexpr uint32_t AssemblyLifetime=120000;
 inline bool freshReception(bool ready, bool received, uint32_t now, uint32_t lastReceived, uint32_t timeout) {
  return ready && received && uint32_t(now-lastReceived)<=timeout;
@@ -22,9 +22,9 @@ class ReceiveStream {
  size_t length=0;
  uint32_t lastByteAt=0;
  bool skipRssi=false, reportRssi=false, possibleStart=false, overflow=false;
- // The reserved zero in the RV1 header terminates the first COBS block.
+ // The reserved zero in the RV2 header terminates the first COBS block.
  static bool startsFrame(const uint8_t* bytes,size_t size) {
-  return size>=4&&bytes[0]==4&&bytes[1]==0xe2&&bytes[2]==0x7a&&bytes[3]==1;
+  return size>=4&&bytes[0]==4&&bytes[1]==0xe2&&bytes[2]==0x7a&&bytes[3]==2;
  }
 public:
  template<class Signal>
@@ -99,20 +99,20 @@ inline bool encodeSettings(const Settings& s,const uint8_t* old,uint8_t* out){
 }
 inline unsigned mode(const char* value){return !strcmp(value,"WOR_TX")?1:!strcmp(value,"WOR_RX")?2:0;}
 inline uint8_t span(uint16_t packet){return packet>=64&&packet<=200?uint8_t(packet-2-Header-Tag):0;}
-struct Fragment {uint32_t transfer=0,crc=0;uint8_t sender[6]{},target[6]{},index=0,count=0,step=0,length=0;uint16_t total=0;const uint8_t* bytes=nullptr;};
-inline size_t fragment(const uint8_t* message,size_t total,uint32_t transfer,const uint8_t* sender,const uint8_t* target,uint8_t step,uint8_t index,uint8_t* out){if(!step||total==0||total>MaxMessage)return 0;size_t count=(total+step-1)/step;if(count>255||index>=count)return 0;size_t size=total-size_t(index)*step;if(size>step)size=step;out[0]=0xe2;out[1]=0x7a;out[2]=1;out[3]=0;put32(out+4,transfer);memcpy(out+8,sender,6);memcpy(out+14,target,6);out[20]=index;out[21]=count;put16(out+22,total);out[24]=size;out[25]=step;put32(out+26,PacketValidationCore::crc32((const char*)message,total));memcpy(out+Header,message+size_t(index)*step,size);return Header+size;}
+struct Fragment {uint32_t transfer=0,crc=0,turn=0;uint8_t sender[6]{},target[6]{},index=0,count=0,step=0,length=0;uint16_t total=0;const uint8_t* bytes=nullptr;};
+inline size_t fragment(const uint8_t* message,size_t total,uint32_t transfer,const uint8_t* sender,const uint8_t* target,uint8_t step,uint8_t index,uint8_t* out,uint32_t turn=0){if(!step||total==0||total>MaxMessage)return 0;size_t count=(total+step-1)/step;if(count>255||index>=count)return 0;size_t size=total-size_t(index)*step;if(size>step)size=step;out[0]=0xe2;out[1]=0x7a;out[2]=2;out[3]=0;put32(out+4,transfer);memcpy(out+8,sender,6);memcpy(out+14,target,6);out[20]=index;out[21]=count;put16(out+22,total);out[24]=size;out[25]=step;put32(out+26,PacketValidationCore::crc32((const char*)message,total));put32(out+30,turn);memcpy(out+Header,message+size_t(index)*step,size);return Header+size;}
 // HMAC must be verified by the caller before admitting the parsed fragment.
-inline bool parse(const uint8_t* in,size_t n,Fragment& f){if(n<Header+1||in[0]!=0xe2||in[1]!=0x7a||in[2]!=1||in[3])return false;f.transfer=get32(in+4);memcpy(f.sender,in+8,6);memcpy(f.target,in+14,6);f.index=in[20];f.count=in[21];f.total=get16(in+22);f.length=in[24];f.step=in[25];f.crc=get32(in+26);f.bytes=in+Header;if(!f.step||f.total==0||f.total>MaxMessage||!f.count||f.index>=f.count||n!=Header+f.length||size_t(f.index)*f.step>=f.total||f.count!=(f.total+f.step-1)/f.step)return false;size_t wanted=f.total-size_t(f.index)*f.step;if(wanted>f.step)wanted=f.step;return f.length==wanted;}
-struct Assembly {bool used=false;uint8_t sender[6]{},target[6]{},count=0,step=0,received[32]{};uint16_t total=0,parts=0;uint32_t transfer=0,crc=0,started=0;uint8_t data[MaxMessage]{};};
+inline bool parse(const uint8_t* in,size_t n,Fragment& f){if(n<Header+1||in[0]!=0xe2||in[1]!=0x7a||in[2]!=2||in[3])return false;f.transfer=get32(in+4);memcpy(f.sender,in+8,6);memcpy(f.target,in+14,6);f.index=in[20];f.count=in[21];f.total=get16(in+22);f.length=in[24];f.step=in[25];f.crc=get32(in+26);f.turn=get32(in+30);f.bytes=in+Header;if(!f.step||f.total==0||f.total>MaxMessage||!f.count||f.index>=f.count||n!=Header+f.length||size_t(f.index)*f.step>=f.total||f.count!=(f.total+f.step-1)/f.step)return false;size_t wanted=f.total-size_t(f.index)*f.step;if(wanted>f.step)wanted=f.step;return f.length==wanted;}
+struct Assembly {bool used=false;uint8_t sender[6]{},target[6]{},count=0,step=0,received[32]{};uint16_t total=0,parts=0;uint32_t transfer=0,crc=0,lastProgress=0;uint8_t data[MaxMessage]{};};
 class Assembler {
 public:
  Assembly entries[2];uint32_t rejected=0,expired=0,duplicates=0;
- void expire(uint32_t now){for(auto& e:entries)if(e.used&&uint32_t(now-e.started)>AssemblyLifetime){e.used=false;++expired;}}
- Assembly* add(const Fragment& f,uint32_t now){expire(now);Assembly* item=nullptr;for(auto& e:entries)if(e.used&&e.transfer==f.transfer&&!memcmp(e.sender,f.sender,6)){item=&e;break;}if(!item)for(auto& e:entries)if(!e.used){item=&e;break;}if(!item){++rejected;return nullptr;}auto& e=*item;
-  if(!e.used){e.used=true;e.transfer=f.transfer;e.crc=f.crc;e.total=f.total;e.count=f.count;e.step=f.step;e.parts=0;e.started=now;memset(e.received,0,sizeof(e.received));memcpy(e.sender,f.sender,6);memcpy(e.target,f.target,6);}
+ void expire(uint32_t now,uint32_t lifetime=AssemblyLifetime){for(auto& e:entries)if(e.used&&uint32_t(now-e.lastProgress)>lifetime){e.used=false;++expired;}}
+ Assembly* add(const Fragment& f,uint32_t now,uint32_t lifetime=AssemblyLifetime){expire(now,lifetime);Assembly* item=nullptr;for(auto& e:entries)if(e.used&&e.transfer==f.transfer&&!memcmp(e.sender,f.sender,6)){item=&e;break;}if(!item)for(auto& e:entries)if(!e.used){item=&e;break;}if(!item){++rejected;return nullptr;}auto& e=*item;
+  if(!e.used){e.used=true;e.transfer=f.transfer;e.crc=f.crc;e.total=f.total;e.count=f.count;e.step=f.step;e.parts=0;e.lastProgress=now;memset(e.received,0,sizeof(e.received));memcpy(e.sender,f.sender,6);memcpy(e.target,f.target,6);}
   if(e.crc!=f.crc||e.total!=f.total||e.count!=f.count||e.step!=f.step||memcmp(e.target,f.target,6)){e.used=false;++rejected;return nullptr;}
   uint8_t mask=1<<(f.index%8);size_t offset=size_t(f.index)*f.step;if(e.received[f.index/8]&mask){if(memcmp(e.data+offset,f.bytes,f.length)){e.used=false;++rejected;}else ++duplicates;return nullptr;}
-  memcpy(e.data+offset,f.bytes,f.length);e.received[f.index/8]|=mask;++e.parts;
+  memcpy(e.data+offset,f.bytes,f.length);e.received[f.index/8]|=mask;++e.parts;e.lastProgress=now;
   if(e.parts!=e.count)return nullptr;
   if(PacketValidationCore::crc32((const char*)e.data,e.total)!=e.crc){e.used=false;++rejected;return nullptr;}return &e;
  }

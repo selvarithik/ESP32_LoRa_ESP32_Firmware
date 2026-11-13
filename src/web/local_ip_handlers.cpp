@@ -9,9 +9,9 @@
 namespace {
 struct Challenge {String id,nonce;uint32_t issued=0;};Challenge challenges[8];unsigned challengeIndex=0;
 bool permitted(const String& id){
- auto& c=configManager.get();if(!c.local_ip_enabled||c.mesh_key.length()<32||id.isEmpty()||id.length()>48)return false;
+ auto& c=configManager.get();if(c.mesh_key.length()<32||id.isEmpty()||id.length()>48)return false;
  for(char v:id)if(!isalnum(v)&&v!='_'&&v!='-'&&v!='.'&&v!=':')return false;
- if(c.role==DeviceRole::NODE)return id==c.master_id;
+ if(c.role==DeviceRole::NODE)return c.local_ip_enabled&&id==c.master_id;
  String allowed=","+c.allowed_peers_csv+",";allowed.replace(" ","");return allowed.indexOf(","+id+",")>=0;
 }
 }
@@ -44,6 +44,13 @@ void LocalWebServer::handleLocalExchange(){
  if(!LocalIpAuth::equal(LocalIpAuth::mac(configManager.get().mesh_key,"LOCALIP1",id,nonce,raw),_server.header("X-Local-Signature"))){sendJson(401,"{\"error\":\"AUTH_FAILED\"}");return;}
  Message m;String remote=_server.client().remoteIP().toString();
  if(!Message::fromJson(raw,m)||!networkService.accept(m,remote)||((m.source!=id)&&(configManager.get().role!=DeviceRole::NODE||m.source!="GATEWAY"))){sendJson(403,"{\"error\":\"INVALID_OR_UNAUTHORIZED_PACKET\"}");return;}
+ if(!configManager.get().local_ip_enabled){
+   // An MQTT-mode Master accepts only authenticated airtime status over LAN.
+   JsonDocument body;
+   if(m.type!=PacketType::STATUS||m.destination!="GATEWAY"||deserializeJson(body,m.payload)||body["radio_airtime_status"]!="BUDGET_EXHAUSTED"){
+     sendJson(403,"{\"error\":\"LOCAL_IP_DISABLED\"}");return;
+   }
+ }
  auto now=time(nullptr);if(m.timestamp&&now>1700000000&&(m.timestamp>now+30||now-m.timestamp>300)){sendJson(400,"{\"error\":\"EXPIRED\"}");return;}
  if((m.type==PacketType::COMMAND||m.type==PacketType::CONFIG_GET||m.type==PacketType::CONFIG_UPDATE)&&(!m.timestamp||now<1700000000)){sendJson(409,"{\"error\":\"CLOCK_REQUIRED\"}");return;}
  if(!transportManager.enqueue(raw,remote)){_server.sendHeader("Retry-After","1");sendJson(503,String("{\"error\":\"")+transportManager.inboundError()+"\"}");return;}

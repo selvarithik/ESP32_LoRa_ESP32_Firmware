@@ -7,6 +7,8 @@ public:
  bool begin(const DeviceConfig& config);
  bool send(const Message& message);
  bool canReply() const;
+ bool canPoll() const;
+ uint32_t airtimeRefusals() const;
  bool available();
  bool receive(Message& message);
  void loop();

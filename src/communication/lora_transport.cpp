@@ -1,6 +1,7 @@
 #include "lora_transport.h"
 #include "e220_core.h"
 #include "radio_turn.h"
+#include "radio_airtime.h"
 #include "../config/hardware_profile.h"
 #include "../core/logger.h"
 #include <esp_mac.h>
@@ -27,6 +28,10 @@ E220Core::ReceiveStream rxStream;
 uint8_t txData[E220Core::MaxMessage]{};size_t txLength=0;uint8_t txPart=0;String txId,lastSender,resultId;bool resultOk=false,hasResult=false,rxReady=false;
 Message received;
 RadioTurn::Exchange radioTurn;
+RadioAirtime::Budget airtime;
+uint32_t bootTxAt=0,nextPollAt=0,budgetDenials=0,turnToken=0;
+uint8_t slotFragments=0;
+bool bootQuiet=true,pollCooling=false,replyPaused=false,budgetBlocked=false,partialReply=false;
 uint32_t masterQuietUntil=0;
 bool masterWaiting=false,masterQuiet=true;
 struct Seen {uint8_t sender[6]{};uint32_t transfer=0,crc=0,at=0;bool used=false;};Seen seen[32];uint8_t seenNext=0;
@@ -50,16 +55,21 @@ bool validPoll(const Message& m,const String& sender){
  return (m.source==sender||m.source=="GATEWAY")&&body["command"].is<const char*>()&&body["arguments"].is<JsonObject>()&&
   body["command_id"].as<String>()==m.messageId;
 }
-void finishSend(bool ok){txLength=0;hasResult=true;resultId=txId;resultOk=ok;}
+void finishSend(bool ok){txLength=0;replyPaused=false;hasResult=true;resultId=txId;resultOk=ok;}
 void receiveFrame(const uint8_t* encoded,size_t length){size_t n=E220Core::cobsDecode(encoded,length,raw,sizeof(raw));if(n<=E220Core::Header+E220Core::Tag){++rejected;return;}uint8_t signature[32];size_t body=n-E220Core::Tag;if(!tag(raw,body,signature)){++authFailures;return;}uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[body+i];if(diff){++authFailures;return;}E220Core::Fragment f;if(!E220Core::parse(raw,body,f)){++rejected;return;}
  if(memcmp(f.target,ownMac,6)||!memcmp(f.sender,ownMac,6))return;
  const uint32_t now=millis();
  const String sender=identity(f.sender);
  if(isMaster()){
-  if(!masterWaiting||!radioTurn.matches(f.sender,f.transfer,now))return;
- }else if(config.master_id!=sender||(radioTurn.busy()&&!radioTurn.expired(now)))return;
+  if(!masterWaiting||!radioTurn.matches(f.sender,f.turn,now))return;
+ }else if(f.turn!=f.transfer||config.master_id!=sender||(radioTurn.busy()&&!radioTurn.expired(now)))return;
  for(auto& item:seen)if(item.used&&millis()-item.at<E220Core::AssemblyLifetime&&item.transfer==f.transfer&&!memcmp(item.sender,f.sender,6)){return;}
- auto* message=assemblies.add(f,millis());if(!message)return;
+ const uint32_t rejectedBefore=assemblies.rejected;
+ auto* message=assemblies.add(f,now,isMaster()?RadioAirtime::ReplyAssemblyMs:E220Core::AssemblyLifetime);
+ if(!message){
+  if(isMaster()&&f.count>1&&assemblies.rejected==rejectedBefore)partialReply=true;
+  return;
+ }
  Message parsed;
  const bool valid=!rxReady&&unpack(message->data,message->total,parsed)&&parsed.radioHopCount==1&&parsed.nextHop==config.device_id&&
   (isMaster()?parsed.source==sender&&(parsed.destination==config.device_id||parsed.destination=="GATEWAY"):
@@ -80,7 +90,7 @@ void receiveFrame(const uint8_t* encoded,size_t length){size_t n=E220Core::cobsD
  message->used=false;
 }
 }
-bool LoRaTransport::begin(const DeviceConfig& c){config=c;state=State::Off;error="DISABLED";initialized=false;masterQuietUntil=millis()+RadioTurn::ReplyMs;esp_read_mac(ownMac,ESP_MAC_WIFI_STA);if(!HardwareProfile::roleMatches(c.role==DeviceRole::MASTER)){error="BUILD_ROLE_MISMATCH";return false;}uint8_t configuredMac[6];if(!mac(c.device_id,configuredMac)||memcmp(configuredMac,ownMac,6)){error="IDENTITY_NOT_HARDWARE_MAC";return false;}gpio_deep_sleep_hold_dis();gpio_hold_dis((gpio_num_t)c.lora_m0_pin);gpio_hold_dis((gpio_num_t)c.lora_m1_pin);if(!c.lora_enabled)return false;probeOnly=false;return requestProbe(false);}
+bool LoRaTransport::begin(const DeviceConfig& c){config=c;state=State::Off;error="DISABLED";initialized=false;bootTxAt=millis()+RadioAirtime::BootQuietMs;masterQuietUntil=millis()+RadioTurn::ReplyMs;esp_read_mac(ownMac,ESP_MAC_WIFI_STA);if(!HardwareProfile::roleMatches(c.role==DeviceRole::MASTER)){error="BUILD_ROLE_MISMATCH";return false;}uint8_t configuredMac[6];if(!mac(c.device_id,configuredMac)||memcmp(configuredMac,ownMac,6)){error="IDENTITY_NOT_HARDWARE_MAC";return false;}gpio_deep_sleep_hold_dis();gpio_hold_dis((gpio_num_t)c.lora_m0_pin);gpio_hold_dis((gpio_num_t)c.lora_m1_pin);if(!c.lora_enabled)return false;probeOnly=false;return requestProbe(false);}
 bool LoRaTransport::requestProbe(bool readOnly,uint8_t diagnosticPort){
  if((diagnosticPort!=1&&diagnosticPort!=2)||(!readOnly&&diagnosticPort!=2)){error="DIAGNOSTIC_UART_INVALID";return false;}if(!HardwareProfile::roleMatches(config.role==DeviceRole::MASTER)){error="BUILD_ROLE_MISMATCH";return false;}uint8_t configuredMac[6];if(!mac(config.device_id,configuredMac)||memcmp(configuredMac,ownMac,6)){error="IDENTITY_NOT_HARDWARE_MAC";return false;}if(state!=State::Off&&state!=State::Fault)return false;probeOnly=readOnly||!config.lora_enabled;if(config.lora_uart!=2||!HardwareProfile::radioUartPins(config.role==DeviceRole::MASTER,config.lora_rx_pin,config.lora_tx_pin)||config.lora_aux_pin!=HardwareProfile::RadioAux||config.lora_m0_pin!=HardwareProfile::RadioM0||config.lora_m1_pin!=HardwareProfile::RadioM1){error="UNVERIFIED_RADIO_PINS";return false;}if(!probeOnly&&config.mesh_key.length()<32){error="MESH_CREDENTIAL_REQUIRED";return false;}
  normalUart.end();diagnosticUart.end();useDiagnosticUart=diagnosticPort==1;
@@ -108,18 +118,21 @@ void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==St
 if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return;}unsigned mode=E220Core::mode(config.lora_work_mode.c_str());digitalWrite(config.lora_m0_pin,mode&1);digitalWrite(config.lora_m1_pin,(mode>>1)&1);radioUart().updateBaudRate(observed.baud);state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
  if(state==State::Restoring){if(high&&now-since>=5&&now-auxSince>=2){if(!strcmp(error,"STARTING_NORMAL_MODE")){state=State::Ready;initialized=true;error="NONE";logger.info("LORA","Read-only settings check passed; normal mode ready (hardware link unverified)");}else{state=State::Fault;radioUart().end();}}else if(now-since>3000){state=State::Fault;radioUart().end();error="MODE_RESTORE_TIMEOUT";++timeouts;}return;}
  if(state!=State::Ready)return;
+ if(bootQuiet&&RadioTurn::due(now,bootTxAt))bootQuiet=false;
+ if(pollCooling&&RadioTurn::due(now,nextPollAt))pollCooling=false;
+ const uint32_t used=airtime.used(now);
+ if(budgetBlocked&&used<=RadioAirtime::LimitUs-RadioAirtime::WorstFragmentUs)budgetBlocked=false;
  if(masterQuiet&&RadioTurn::due(now,masterQuietUntil))masterQuiet=false;
  if(isMaster()&&masterWaiting&&radioTurn.expired(now)){
   radioTurn.clear();
   masterWaiting=false;
   masterQuiet=true;
   masterQuietUntil=RadioTurn::retryAt(now,esp_random());
-  ++timeouts;
-  error="RADIO_REPLY_TIMEOUT";
-  finishSend(false);
+  if(!partialReply){++timeouts;error="RADIO_REPLY_TIMEOUT";}
+  finishSend(partialReply);
  }
  if(txAwake&&config.lora_work_mode=="WOR_RX"&&idle()&&now-txAwakeAt>3000&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,HIGH);txAwake=false;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
- assemblies.expire(now);
+ assemblies.expire(now,isMaster()?RadioAirtime::ReplyAssemblyMs:E220Core::AssemblyLifetime);
  const auto signal=[](int rssi){lastRssi=rssi;hasRssi=true;};
  if(rxStream.expire(now,signal))++rejected;
  for(unsigned budget=0;budget<256&&radioUart().available();++budget){
@@ -131,40 +144,52 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
    },
    signal))++rejected;
  }
- if(txLength&&(now-txStarted>config.message_max_age_ms||(!isMaster()&&radioTurn.expired(now)))){
+ if(replyPaused&&!bootQuiet&&!budgetBlocked&&radioTurn.canClaim(target,now)){
+  turnToken=radioTurn.claim();slotFragments=0;replyPaused=false;
+ }
+ if(txLength&&now-txStarted>(isMaster()?config.message_max_age_ms:RadioAirtime::ReplyAssemblyMs)){
   finishSend(false);error=high?"MESSAGE_TX_EXPIRED":"AUX_BUSY_TIMEOUT";++timeouts;
  }
- if(!txLength||!high||now-auxSince<2||(int32_t)(now-nextTx)<0)return;
- uint8_t step=E220Core::span(observed.packet);size_t n=E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw);uint8_t signature[32];if(!n||!tag(raw,n,signature)){finishSend(false);return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){finishSend(false);++rejected;return;}
- // AUX reflects UART/module buffering, not an application ACK. Keep a conservative airtime guard.
- static const uint32_t rates[]={2400,2400,2400,4800,9600,19200,38400,62500};uint32_t guard=uint32_t(n)*12000/observed.baud+uint32_t(n)*16000/rates[observed.airRate]+50+(config.lora_work_mode=="WOR_TX"?config.lora_wor_cycle_ms:0)+(observed.lbt?2000:0);nextTx=now+guard;
- if(!isMaster()&&!radioTurn.canWrite(now,guard)){finishSend(false);return;}
+ if(!txLength||replyPaused||!high||now-auxSince<2||(int32_t)(now-nextTx)<0)return;
+ uint8_t step=E220Core::span(observed.packet);size_t n=E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw,turnToken);uint8_t signature[32];if(!n||!tag(raw,n,signature)){finishSend(false);return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){finishSend(false);++rejected;return;}
  const size_t prefix=observed.fixed?3:0;
- if(radioUart().availableForWrite()<int(n+prefix)){nextTx=now;return;}
- if(prefix){uint8_t address[]={255,255,observed.channel};radioUart().write(address,3);}
- if(radioUart().write(encoded,n)!=n){
+ const uint32_t guard=(RadioAirtime::fragmentUs(n+prefix)+999)/1000+
+  uint32_t(n+prefix)*12000/observed.baud+50+
+  (observed.lbt?2000:0);
+ if(!isMaster()&&!radioTurn.canWrite(now,guard)){replyPaused=true;return;}
+ if(radioUart().availableForWrite()<int(n+prefix))return;
+ if(!airtime.debit(now,n+prefix,guard)){
+  ++budgetDenials;budgetBlocked=true;
+  logger.warn("LORA","Airtime budget exhausted; fragment not transmitted");
+  if(isMaster())finishSend(false);else replyPaused=true;
+  return;
+ }
+ nextTx=now+guard;
+ if(isMaster()&&!slotFragments){pollCooling=true;nextPollAt=now+RadioAirtime::PollIntervalMs;}
+ const uint8_t address[]={255,255,observed.channel};
+ if((prefix&&radioUart().write(address,prefix)!=prefix)||radioUart().write(encoded,n)!=n){
   ++timeouts;
   if(isMaster()){masterQuiet=true;masterQuietUntil=nextTx+RadioTurn::ReplyMs;}
   finishSend(false);
   return;
  }
- ++txCount;++txPart;
+ ++txCount;++txPart;++slotFragments;
  if(size_t(txPart)*step>=txLength){
   ++completed;
   if(isMaster()){
    txLength=0;
    radioTurn.open(target,transfer,now,nextTx+RadioTurn::ReplyMs);
-   masterWaiting=true;
+   masterWaiting=true;partialReply=false;
   }else finishSend(true);
- }
+ }else if(!isMaster()&&!RadioAirtime::slotAllows(slotFragments,RadioAirtime::MaxReplyFragments))replyPaused=true;
 }
 bool LoRaTransport::send(const Message& m){
  const uint32_t now=millis();
  const String hop=m.nextHop.isEmpty()?m.destination:m.nextHop;
  uint8_t address[6];
- if(hop=="BROADCAST"||m.radioHopCount||!mac(hop,address)||!memcmp(address,ownMac,6))return false;
+ if(bootQuiet||budgetBlocked||config.lora_work_mode=="WOR_TX"||hop=="BROADCAST"||m.radioHopCount||!mac(hop,address)||!memcmp(address,ownMac,6))return false;
  if(isMaster()){
-  if(masterWaiting||masterQuiet||m.destination!=hop||!pollType(m.type))return false;
+  if(masterWaiting||masterQuiet||pollCooling||m.destination!=hop||!pollType(m.type))return false;
  }else if(!radioTurn.canClaim(address,now)||m.source!=config.device_id||
    (m.destination!=hop&&m.destination!="GATEWAY"))return false;
  if(config.lora_work_mode=="WOR_RX"&&!txAwake){if(state==State::Ready&&idle()&&auxReady()){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,LOW);txAwake=true;txAwakeAt=now;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";}return false;}
@@ -174,13 +199,21 @@ bool LoRaTransport::send(const Message& m){
  const uint8_t step=E220Core::span(observed.packet);
  if((txLength+step-1)/step>255){txLength=0;return false;}
  memcpy(target,address,sizeof(target));
- txPart=0;txId=m.messageId;transfer=isMaster()?esp_random():radioTurn.claim();txStarted=now;txAwakeAt=now;
+ txId=m.messageId;
+ if(isMaster()&&(txLength+step-1)/step>RadioAirtime::MaxPollFragments){
+  logger.warn("LORA","Poll exceeds the fragment limit");finishSend(false);return true;
+ }
+ txPart=slotFragments=0;transfer=esp_random();turnToken=isMaster()?transfer:radioTurn.claim();txStarted=now;txAwakeAt=now;
  return true;
 }
 bool LoRaTransport::canReply()const{
  uint8_t parent[6];
- return !isMaster()&&initialized&&state==State::Ready&&!txLength&&!hasResult&&mac(config.master_id,parent)&&radioTurn.canClaim(parent,millis());
+ return !bootQuiet&&!budgetBlocked&&config.lora_work_mode!="WOR_TX"&&!isMaster()&&initialized&&state==State::Ready&&!txLength&&!hasResult&&mac(config.master_id,parent)&&radioTurn.canClaim(parent,millis());
 }
+bool LoRaTransport::canPoll()const{
+ return isMaster()&&initialized&&state==State::Ready&&config.lora_work_mode!="WOR_TX"&&!bootQuiet&&!pollCooling&&!budgetBlocked&&!masterQuiet&&!masterWaiting&&!txLength&&!hasResult;
+}
+uint32_t LoRaTransport::airtimeRefusals()const{return budgetDenials;}
 bool LoRaTransport::powerSleep(bool sleep){
  if(!config.lora_enabled)return true;
  if(sleep){if(state==State::Sleeping)return true;if(state!=State::Ready||!idle()||!auxReady())return false;digitalWrite(config.lora_m0_pin,HIGH);digitalWrite(config.lora_m1_pin,HIGH);state=State::SleepSwitch;since=millis();return false;}
@@ -225,4 +258,8 @@ if(rxCount){d["last_rf_peer"]=lastSender;d["last_rf_age_ms"]=rxAge;}
 d["public_settings_read"]=observedValid;d["register_writes"]=registerWrites;d["work_mode"]=config.lora_work_mode;d["sleeping"]=state==State::Sleeping;d["wor_cycle_ms"]=config.lora_wor_cycle_ms;d["aux_ready"]=auxReady();d["probe_phase"]=probePhase;d["settings_query_sent"]=settingsQuerySent;d["settings_response_bytes"]=settingsReader.total;d["settings_read_attempts"]=settingsAttempts;d["uart_peripheral"]=useDiagnosticUart?1:2;d["uart_actual_baud"]=probePinsConfigured?radioUart().baudRate():0;String publicReply;for(unsigned i=0;i<settingsLength&&i<9;++i){char byte[3];snprintf(byte,sizeof(byte),"%02X",settingsBytes[i]);publicReply+=byte;}d["settings_response_hex"]=publicReply;auto pins=d["pin_levels"].to<JsonObject>();pins["initialized_by_probe"]=probePinsConfigured;pins["rx_gpio"]=config.lora_rx_pin;pins["tx_gpio"]=config.lora_tx_pin;pins["aux_gpio"]=config.lora_aux_pin;pins["m0_gpio"]=config.lora_m0_pin;pins["m1_gpio"]=config.lora_m1_pin;
 // Direct pad reads, independent of driver Fault/Off readiness. No pin mode/output changes here.
 pins["aux_high"]=digitalRead(config.lora_aux_pin)==HIGH;if(probePinsConfigured){pins["m0_high"]=digitalRead(config.lora_m0_pin)==HIGH;pins["m1_high"]=digitalRead(config.lora_m1_pin)==HIGH;}else{pins["m0_high"]=nullptr;pins["m1_high"]=nullptr;}
+auto budget=d["airtime_budget"].to<JsonObject>();
+budget["state"]=budgetBlocked?"BUDGET_EXHAUSTED":bootQuiet?"BOOT_QUIET":"AVAILABLE";
+budget["used_us"]=airtime.used(millis());budget["limit_us"]=RadioAirtime::LimitUs;
+budget["refusals"]=budgetDenials;budget["poll_interval_ms"]=RadioAirtime::PollIntervalMs;budget["model_verified"]=false;
 d["tx_pending"]=txLength>0;d["tx_uart_fragments"]=txCount;d["rx_messages"]=rxCount;d["rejected"]=rejected;d["auth_failures"]=authFailures;d["timeouts"]=timeouts;d["reassembly_expired"]=assemblies.expired;d["reassembly_duplicates"]=assemblies.duplicates;d["completed_uart_transfers"]=completed;if(hasRssi&&observed.rssi&&rxCount)d["rssi_dbm"]=lastRssi;else d["rssi_dbm"]=nullptr;d["snr_db"]=nullptr;if(observedValid){auto s=d["observed"].to<JsonObject>();s["address"]=observed.address;s["baud"]=observed.baud;s["channel"]=observed.channel;s["air_rate_code"]=observed.airRate;s["power_dbm"]=observed.power;s["subpacket_bytes"]=observed.packet;s["wor_cycle_ms"]=observed.worMs;s["fixed_mode"]=observed.fixed;s["rssi_enabled"]=observed.rssi;s["lbt"]=observed.lbt;}String out;serializeJson(d,out);return out;}
