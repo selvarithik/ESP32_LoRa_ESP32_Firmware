@@ -42,6 +42,7 @@ uint32_t announcedBudgetDenials=0,budgetNoticeAt=0;
 Message slaveBudgetNotice;
 uint32_t heartbeatAt=0,telemetryAt=0,helloAt=0,pollAt=0,sequence=0,failed=0,duplicates=0;
 uint32_t sensorCheckedAt=0,diagnosticAt=0,recoveryHelloAt=0;
+String reportedRadioConfig;
 String previousSensorStatus,lastPowerIntent;
 String latestCommand,latestState="IDLE",latestResult="{}";
 Peer* peer(const String& id){for(auto& p:peers)if(p.id==id)return &p;return nullptr;}
@@ -100,6 +101,7 @@ String bodyStatus() {
     if(c.role==DeviceRole::MASTER&&loraTransport.isInitialized()){
         d["radio_poll_interval_ms"]=RadioAirtime::PollIntervalMs;
         loraTransport.appendSignalStatus(d["radio_signal"].to<JsonObject>());
+        loraTransport.appendRadioConfig(d["radio_config"].to<JsonObject>());
         auto children=d["radio_poll_children"].to<JsonArray>();
         for(const auto& p:peers)if(!p.id.isEmpty()&&p.host=="RADIO:"+p.id)children.add(p.id);
     }
@@ -202,7 +204,7 @@ bool execute(const Message& m,String& result,bool gateway=false,const String& ch
     else if(type=="SET_TELEMETRY_INTERVAL"||type=="SET_HEARTBEAT_INTERVAL"||type=="SET_SLEEP_SCHEDULE"||type=="CONFIG_UPDATE"||type=="SET_DEVICE_NAME") {
         JsonDocument update;auto args=d["arguments"].as<JsonObject>();
         bool radioUpdate=false;for(JsonPair p:args)if(OperationRules::radioField(p.key().c_str()))radioUpdate=true;
-        if(radioUpdate&&(!gateway||configManager.get().lora_enabled||configManager.get().lora_apply_settings||loraTransport.isInitialized()||operationCoordinatorBusy()||powerManager.draining()))return operationError(result,"RADIO_UPDATE_REQUIRES_DISABLED_LOCAL_COMMISSIONING");
+        if(radioUpdate)return operationError(result,"RADIO_CONFIG_USB_ONLY");
 
         if(!args["local_ip_enabled"].isUnbound()){result="{\"error\":\"TRANSPORT_TRANSACTION_REQUIRED\"}";return false;}
         if(type=="SET_DEVICE_NAME"||type=="CONFIG_UPDATE"||type=="SET_SLEEP_SCHEDULE") {
@@ -217,7 +219,7 @@ bool execute(const Message& m,String& result,bool gateway=false,const String& ch
         bool restartRequired=false;for(JsonPair item:update.as<JsonObject>()){String k=item.key().c_str();if(k.startsWith("wifi_")||k=="role"||k=="master_id"||k=="local_ip_enabled"||k=="routing_policy")restartRequired=true;}
         String raw,error;serializeJson(update,raw);
         if(!configManager.update(raw,error)){JsonDocument r;r["error"]=error;result="";serializeJson(r,result);return false;}
-        JsonDocument saved;saved["saved"]=true;saved["configuration_revision"]=configManager.get().configuration_revision;saved["restart_required"]=restartRequired;if(radioUpdate){saved["radio_activation"]="PENDING_LOCAL_COMMISSIONING";saved["radio_registers_written"]=false;saved["readback_verified"]=false;}result="";serializeJson(saved,result);
+        JsonDocument saved;saved["saved"]=true;saved["configuration_revision"]=configManager.get().configuration_revision;saved["restart_required"]=restartRequired;result="";serializeJson(saved,result);
     } else {result="{\"error\":\"UNSUPPORTED_COMMAND\"}";return false;}
     return true;
 }
@@ -368,6 +370,13 @@ void NetworkService::loop() {
         if(c.role==DeviceRole::NODE&&!gateway&&(m.source==masterId()||m.source=="GATEWAY"))transportManager.masterReceipt();
         if(radio&&m.type==PacketType::HELLO&&m.source!="GATEWAY")radioRoutes.observe(m.source.c_str(),remote.substring(6).c_str(),m.radioHopCount,now);
         if(radio&&c.role==DeviceRole::NODE&&m.type==PacketType::HELLO){
+            if(m.radioWireVersion==3||incomingBody["radio_wire_version"]==3){
+                const String fingerprint=loraTransport.radioConfigFingerprint();
+                if(fingerprint.length()&&fingerprint!=reportedRadioConfig&&
+                   track(make(PacketType::STATUS,m.source,"{\"radio_config_report\":true}"),remote)){
+                    reportedRadioConfig=fingerprint;
+                }
+            }
             if(incomingBody["register"]==true){
                 bool queued=false;
                 for(const auto& item:pending)if(item.used&&item.host==remote&&item.packet.type==PacketType::HELLO)queued=true;
@@ -482,7 +491,7 @@ void NetworkService::loop() {
     for(auto& p:pending)if(p.used) {
         if(p.inFlight)continue;
         const bool retainedReply=p.host.startsWith("RADIO:")&&(p.command||p.packet.type==PacketType::ACK||
-            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO);
+            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO||p.packet.payload=="{\"radio_config_report\":true}");
         if(now-p.created>(retainedReply?RadioAirtime::ReplyAssemblyMs:c.message_max_age_ms)){
             p.used=false;++failed;latestState=p.command?"TIMEOUT":latestState;continue;
         }

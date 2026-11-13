@@ -106,6 +106,12 @@ void dispatch(){
         const auto& c=configManager.get();String confirmation=c.lora_rx_pin==16&&c.lora_tx_pin==17?String("E220_TX_RX_DISCONNECTED_GPIO16_TO_GPIO17"):String("E220_DISCONNECTED_GPIO_RX")+c.lora_rx_pin+"_TX"+c.lora_tx_pin+"_SHORTED";
         if(d.size()!=3||d["confirm_device_id"].as<String>()!=c.device_id||d["confirm"].as<String>()!=confirmation){reply(false,"UART_ISOLATION_AND_IDENTITY_REQUIRED");return;}
         Serial.print("[COMMISSION] ");Serial.println(loraTransport.isolatedUartLoopback());
+#ifdef CONDUCTED_BENCH
+    }else if(op=="bench_radio_channel"){
+        if(!d["channel"].is<uint8_t>()||d["channel"].is<bool>()||
+           d["confirm"]!="CONDUCTED_ONLY"){reply(false,"BENCH_CONFIRMATION_REQUIRED");return;}
+        reply(loraTransport.requestBenchChannel(d["channel"].as<uint8_t>()),"BENCH_RADIO_CHANNEL_REQUEST");
+#endif
     }else if(op=="radio_probe"){
         bool hasPort=!d["uart"].isUnbound();
         if(d.size()!=(hasPort?3:2)||d["confirm"].as<String>()!="READ_ONLY_E220_SETTINGS"||(hasPort&&(!d["uart"].is<uint8_t>()||d["uart"].is<bool>()||(d["uart"].as<unsigned>()!=1&&d["uart"].as<unsigned>()!=2)))){reply(false,"CONFIRMATION_OR_UART_INVALID");return;}

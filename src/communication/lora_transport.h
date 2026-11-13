@@ -21,8 +21,13 @@ public:
  bool idle() const;
  String sender() const;
  void appendSignalStatus(JsonObject status) const;
+ void appendRadioConfig(JsonObject status) const;
+ String radioConfigFingerprint() const;
  String statusJson() const;
  bool requestProbe(bool readOnly=true,uint8_t diagnosticPort=2);
+#ifdef CONDUCTED_BENCH
+ bool requestBenchChannel(uint8_t channel);
+#endif
  String isolatedUartLoopback();
  bool powerSleep(bool sleep);
  bool delivery(String& messageId,bool& success);

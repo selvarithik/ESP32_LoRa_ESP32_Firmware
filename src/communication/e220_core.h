@@ -75,8 +75,8 @@ public:
   return true;
  }
 };
-struct Settings {uint16_t address=0;uint32_t baud=0;uint8_t airRate=0,channel=0,power=0;uint16_t packet=0;bool fixed=false,rssi=false,lbt=false;uint16_t worMs=2000;};
-inline bool settings(const uint8_t* bytes,size_t n,Settings& out){if(n!=9||bytes[0]!=0xc1||bytes[1]!=0||bytes[2]!=6)return false;const uint8_t* p=bytes+3;static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};static const uint16_t lengths[]={200,128,64,32};static const uint8_t power[]={22,17,13,10};if((((p[2]>>3)&3)==1||((p[2]>>3)&3)==2)||p[4]>80)return false;out.address=uint16_t(p[0])<<8|p[1];out.baud=baud[p[2]>>5];out.airRate=p[2]&7;out.packet=lengths[p[3]>>6];out.power=power[p[3]&3];out.channel=p[4];out.rssi=p[5]&128;out.fixed=p[5]&64;out.lbt=p[5]&16;out.worMs=((p[5]&7)+1)*500;return true;}
+struct Settings {uint16_t address=0;uint32_t baud=0;uint8_t airRate=0,channel=0,power=0;uint16_t packet=0;bool fixed=false,rssi=false,lbt=false;uint16_t worMs=2000;bool noiseRssi=false;uint8_t parity=0;};
+inline bool settings(const uint8_t* bytes,size_t n,Settings& out){if(n!=9||bytes[0]!=0xc1||bytes[1]!=0||bytes[2]!=6)return false;const uint8_t* p=bytes+3;static const uint32_t baud[]={1200,2400,4800,9600,19200,38400,57600,115200};static const uint16_t lengths[]={200,128,64,32};static const uint8_t power[]={22,17,13,10};if((((p[2]>>3)&3)==1||((p[2]>>3)&3)==2)||p[4]>80)return false;out.address=uint16_t(p[0])<<8|p[1];out.baud=baud[p[2]>>5];out.parity=(p[2]>>3)&3;out.airRate=p[2]&7;out.noiseRssi=p[3]&32;out.packet=lengths[p[3]>>6];out.power=power[p[3]&3];out.channel=p[4];out.rssi=p[5]&128;out.fixed=p[5]&64;out.lbt=p[5]&16;out.worMs=((p[5]&7)+1)*500;return true;}
 // A partial/stale UART prefix must not permanently misalign a settings response.
 // Only a complete, semantically valid public-register frame is accepted.
 class SettingsReader {

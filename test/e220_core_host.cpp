@@ -279,6 +279,9 @@ int main(){
 #endif
  assert(HardwareProfile::roleMatches(true)&&HardwareProfile::roleMatches(false));
  uint8_t registers[]={0xc1,0,6,0x12,0x34,0x62,0,23,0};E220Core::Settings settings;assert(E220Core::settings(registers,9,settings));assert(settings.address==0x1234&&settings.baud==9600&&settings.packet==200&&settings.channel==23&&settings.airRate==2&&settings.power==22&&!settings.fixed);
+ const uint8_t outOfBand[]={0xc1,0,6,0,0,0x62,0,18,0x83};
+ assert(E220Core::settings(outOfBand,sizeof(outOfBand),settings));
+ assert(settings.channel==18&&settings.power==22&&!settings.noiseRssi&&settings.parity==0);
  assert(!E220Core::settings(registers,8,settings));registers[7]=81;assert(!E220Core::settings(registers,9,settings));registers[7]=23;registers[5]=0x6a;assert(!E220Core::settings(registers,9,settings));registers[5]=0x62;
  for(unsigned size=1;size<=500;++size){std::vector<uint8_t> input(size),encoded(size+size/254+3),decoded(size);for(unsigned i=0;i<size;++i)input[i]=(i*31)%256;size_t n=E220Core::cobsEncode(input.data(),size,encoded.data(),encoded.size());assert(n&&encoded[n-1]==0);size_t m=E220Core::cobsDecode(encoded.data(),n-1,decoded.data(),decoded.size());assert(m==size&&decoded==input);assert(!E220Core::cobsEncode(input.data(),size,encoded.data(),size));}
  uint8_t sender[6]={1,2,3,4,5,6},target[6]={6,5,4,3,2,1};
