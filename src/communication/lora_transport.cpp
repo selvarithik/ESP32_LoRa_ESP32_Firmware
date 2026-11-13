@@ -607,6 +607,18 @@ static void describeRadioConfig(JsonObject status,const E220Core::Settings& obse
 void LoRaTransport::appendRadioConfig(JsonObject status)const{
  if(observedValid)describeRadioConfig(status,observed);
 }
+void LoRaTransport::appendRadioMetrics(JsonObject status)const{
+ const uint32_t now=millis(),used=airtime.used(now);
+ status["tx_fragments"]=txCount;status["rx_fragments"]=rxFragments;
+ status["delivered"]=rxCount;status["rejects"]=rejected;
+ status["auth_failures"]=authFailures;status["protocol_mismatches"]=protocolMismatches;
+ status["timeouts"]=timeouts;status["budget_refusals"]=budgetDenials;
+ status["used_us"]=used;status["limit_us"]=RadioAirtime::LimitUs;
+ status["remaining_us"]=RadioAirtime::LimitUs-used;status["last_fragment_us"]=lastModeledUs;
+ status["poll_interval_ms"]=RadioAirtime::PollIntervalMs;
+ status["next_tx_gap_ms"]=RadioTurn::due(now,nextTx)?0:nextTx-now;
+ status["model_verified"]=false;
+}
 String LoRaTransport::statusJson()const{JsonDocument d;d["state"]=state==State::Sleeping?"SLEEPING":initialized?"READY_LINK_UNVERIFIED":state==State::Off?"DISABLED":state==State::Fault?"ERROR":"INSPECTING";d["error"]=error;d["module"]="E220-900T22D";const bool fresh=hasFreshReception();d["hardware_link_verified"]=fresh;
 const uint32_t rxAge=millis()-lastRfRxAt;
 d["rf_receive_state"]=!initialized||state!=State::Ready?"INACTIVE":!rxCount?"WAITING_FOR_PEER":fresh?"RECEIVING":"STALE";

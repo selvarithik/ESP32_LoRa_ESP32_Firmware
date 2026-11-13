@@ -22,6 +22,7 @@ public:
  String sender() const;
  void appendSignalStatus(JsonObject status) const;
  void appendRadioConfig(JsonObject status) const;
+ void appendRadioMetrics(JsonObject status) const;
  String radioConfigFingerprint() const;
  String statusJson() const;
  bool requestProbe(bool readOnly=true,uint8_t diagnosticPort=2);

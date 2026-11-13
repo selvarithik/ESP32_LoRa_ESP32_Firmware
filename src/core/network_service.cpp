@@ -100,8 +100,6 @@ String bodyStatus() {
 #endif
     if(c.role==DeviceRole::MASTER&&loraTransport.isInitialized()){
         d["radio_poll_interval_ms"]=RadioAirtime::PollIntervalMs;
-        loraTransport.appendSignalStatus(d["radio_signal"].to<JsonObject>());
-        loraTransport.appendRadioConfig(d["radio_config"].to<JsonObject>());
         auto children=d["radio_poll_children"].to<JsonArray>();
         for(const auto& p:peers)if(!p.id.isEmpty()&&p.host=="RADIO:"+p.id)children.add(p.id);
     }
@@ -110,6 +108,27 @@ String bodyStatus() {
     JsonDocument transportState;deserializeJson(transportState,TransportSwitch::status());d["transport_switch"]=transportState.as<JsonVariant>();d["reset_reason"]=systemManager.resetReason();d["internet_status"]=transportManager.internetStatus();
     JsonDocument sensor;deserializeJson(sensor,sensorManager.telemetryJson());d["sensor_status"]=sensor["status"];JsonDocument health;deserializeJson(health,sensorManager.healthJson());d["sensors"]=health;d["last_sensor_sample_uptime_ms"]=sensor["sampled_uptime_ms"];d["last_transport_accept_uptime_ms"]=transportManager.lastSuccess();d["last_gateway_receipt_uptime_ms"]=transportManager.lastGatewayReceipt();d["sample_time_basis"]="DEVICE_UPTIME_MS";d["enabled"]=c.enabled;
     String s;serializeJson(d,s);return s;
+}
+void reportMasterRadioStatus(uint32_t now){
+    static uint32_t lastPublished=0;
+    const auto& c=configManager.get();
+    if(c.role!=DeviceRole::MASTER||!loraTransport.isInitialized()||
+       !CanonicalMqtt::connected()||(lastPublished&&now-lastPublished<30000))return;
+    JsonDocument status;
+    status["device_id"]=c.device_id;status["role"]="MASTER";status["master_id"]=c.device_id;
+    status["configuration_revision"]=c.configuration_revision;
+    status["firmware_version"]=FIRMWARE_VERSION;status["heartbeat_seconds"]=c.heartbeat_seconds;
+    status["radio_poll_interval_ms"]=RadioAirtime::PollIntervalMs;
+#ifdef CONDUCTED_BENCH
+    status["bench_build"]=true;
+#endif
+    auto children=status["radio_poll_children"].to<JsonArray>();
+    for(const auto& peer:peers)if(peer.host.startsWith("RADIO:"))children.add(peer.id);
+    loraTransport.appendSignalStatus(status["radio_signal"].to<JsonObject>());
+    loraTransport.appendRadioConfig(status["radio_config"].to<JsonObject>());
+    loraTransport.appendRadioMetrics(status["radio_metrics"].to<JsonObject>());
+    String body;serializeJson(status,body);
+    if(CanonicalMqtt::publish(make(PacketType::STATUS,"GATEWAY",body)))lastPublished=now;
 }
 void reportRadioBudget(uint32_t now){
     auto& c=configManager.get();
@@ -341,6 +360,7 @@ void NetworkService::loop() {
         for(auto& p:pending)if(ok&&p.used&&p.packet.messageId==delivered&&p.packet.type==PacketType::ACK&&p.packet.correlationId==operationJob.request.messageId&&operationJob.type=="WIFI_RECONNECT")operationJob.acceptance=true;
         for(auto& p:pending)if(p.used&&p.packet.messageId==delivered&&p.gateway==viaGateway){
             p.inFlight=false;
+            if(ok&&p.packet.payload=="{\"radio_config_report\":true}")reportedRadioConfig=loraTransport.radioConfigFingerprint();
             if(p.host.startsWith("RADIO:")&&!ok)
                 p.next=RadioTurn::retryAt(now+(c.role==DeviceRole::NODE?RadioTurn::ReplyMs:0),esp_random());
             else if(p.host.startsWith("RADIO:")&&p.command)p.next=RadioTurn::retryAt(now+RadioTurn::ReplyMs,esp_random());
@@ -372,10 +392,10 @@ void NetworkService::loop() {
         if(radio&&c.role==DeviceRole::NODE&&m.type==PacketType::HELLO){
             if(m.radioWireVersion==3||incomingBody["radio_wire_version"]==3){
                 const String fingerprint=loraTransport.radioConfigFingerprint();
-                if(fingerprint.length()&&fingerprint!=reportedRadioConfig&&
-                   track(make(PacketType::STATUS,m.source,"{\"radio_config_report\":true}"),remote)){
-                    reportedRadioConfig=fingerprint;
-                }
+                bool queued=false;
+                for(const auto& item:pending)if(item.used&&item.packet.payload=="{\"radio_config_report\":true}")queued=true;
+                if(!queued&&fingerprint.length()&&fingerprint!=reportedRadioConfig)
+                    track(make(PacketType::STATUS,m.source,"{\"radio_config_report\":true}"),remote);
             }
             if(incomingBody["register"]==true){
                 bool queued=false;
@@ -436,6 +456,7 @@ void NetworkService::loop() {
     }
     Message bootResult;if(powerManager.bootResponse(bootResult)&&upstream(bootResult))powerManager.bootResponseQueued();
     reportRadioBudget(now);
+    reportMasterRadioStatus(now);
     if(c.enabled&&(wifiManager.isConnected()||loraTransport.isInitialized())&&!powerManager.draining()&&!(operationJob.active&&(operationJob.type=="WIFI_RECONNECT"||operationJob.type=="MQTT_CONNECT"||operationJob.type=="MQTT_RECONNECT"||operationJob.type=="MQTT_DISCONNECT"))) {
         if(now-sensorCheckedAt>=1000
 #ifdef CONDUCTED_BENCH
