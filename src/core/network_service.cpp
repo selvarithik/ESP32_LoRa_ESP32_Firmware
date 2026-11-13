@@ -132,6 +132,7 @@ void queueRadioPoll(uint32_t now){
     String candidates[12];
     unsigned count=0;
     for(const auto& p:peers)if(!p.id.isEmpty()&&p.host=="RADIO:"+p.id&&count<12)candidates[count++]=p.id;
+#ifndef CONDUCTED_BENCH
     for(int start=0;start<(int)c.allowed_peers_csv.length()&&count<12;){
         int end=c.allowed_peers_csv.indexOf(',',start);
         if(end<0)end=c.allowed_peers_csv.length();
@@ -141,11 +142,16 @@ void queueRadioPoll(uint32_t now){
         for(unsigned i=0;i<count;++i)if(candidates[i]==id)known=true;
         if(!known)candidates[count++]=id;
     }
+#endif
     radioPollAt=now+10000; // Retry queue admission. Radio driver enforces PollIntervalMs for all transmissions.
     if(!count)return;
     const String& id=candidates[radioPeerIndex++%count];
     const Peer* known=peer(id);
+#ifdef CONDUCTED_BENCH
+    const bool registerNode=false;
+#else
     const bool registerNode=!known||known->host!="RADIO:"+id||now-known->seen>RadioAirtime::ReplyAssemblyMs;
+#endif
     track(make(PacketType::HELLO,id,registerNode?"{\"device_id\":\""+c.device_id+"\",\"role\":\"MASTER\",\"register\":true}":
         "{\"device_id\":\""+c.device_id+"\",\"role\":\"MASTER\"}"),"RADIO:"+id);
 }
@@ -246,7 +252,21 @@ void handleCommand(const Message& m,const String& remote,bool gateway) {
     if(gateway)track(r,configManager.get().server_host,true);else track(r,remote);
 }
 }
-void NetworkService::begin(){helloAt=millis()-30000;helloJitter=esp_random()%2000;heartbeatAt=millis();telemetryAt=millis();pollAt=millis();scheduleRadioDiscovery();}
+void NetworkService::begin(){
+    helloAt=millis()-30000;helloJitter=esp_random()%2000;heartbeatAt=millis();telemetryAt=millis();pollAt=millis();
+#ifdef CONDUCTED_BENCH
+    // Provision only the two boards on the conducted fixture. The existing
+    // transport still verifies the radio address, poll token and HMAC.
+    auto& c=configManager.get();
+    if(c.role==DeviceRole::MASTER&&c.device_id=="ESP32-10777D842178"&&listed("ESP32-842F2AE81F84")){
+        peers[0].id="ESP32-842F2AE81F84";
+        peers[0].host="RADIO:"+peers[0].id;
+        peers[0].seen=millis();
+        logger.info("LORA","Conducted bench peer pre-provisioned: "+peers[0].id);
+    }
+#endif
+    scheduleRadioDiscovery();
+}
 bool NetworkService::accept(const Message& m,const String& remote,bool gateway) {
     auto& c=configManager.get();
     if(m.source==c.device_id)return false;

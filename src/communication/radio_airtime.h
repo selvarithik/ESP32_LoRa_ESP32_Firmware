@@ -30,7 +30,7 @@ constexpr uint32_t ExchangesPerHour=ProductionLimitUs/TypicalTurnUs;
 constexpr uint32_t ProductionPollIntervalMs=(HourMs+ExchangesPerHour-1)/ExchangesPerHour;
 #ifdef CONDUCTED_BENCH
 constexpr uint32_t LimitUs=600000000, PollIntervalMs=60000, BootQuietMs=15000;
-constexpr uint32_t BenchTxGapMs=20000, BenchTxLimit=20;
+constexpr uint32_t BenchTxGapMs=20000, BenchTxLimit=30;
 #else
 constexpr uint32_t LimitUs=ProductionLimitUs, PollIntervalMs=ProductionPollIntervalMs, BootQuietMs=HourMs+15000;
 #endif
