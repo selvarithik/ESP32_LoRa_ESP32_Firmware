@@ -6,6 +6,7 @@
 #include "network_commission_core.h"
 #include "../communication/lora_transport.h"
 #include "commissioning.h"
+#include "node_chat.h"
 #include "connection_indicators.h"
 #include "config_manager.h"
 #include "../config/mqtt_staging.h"
@@ -85,6 +86,12 @@ void dispatch(){
     }else if(op=="mqtt_reconnect"){
         if(d.size()!=2||d["confirm_device_id"].as<String>()!=configManager.get().device_id){reply(false,"IDENTITY_CONFIRMATION_REQUIRED");return;}
         CanonicalMqtt::requestReconnect();reply(true,"MQTT_RUNTIME_RECONNECT_REQUESTED");
+    }else if(op=="chat_pin"){
+        const char* pin=d["pin"]|"";
+        reply(d.size()==2&&NodeChat::configurePin(pin),"CHAT_PIN_RESULT");
+    }else if(op=="chat_send"){
+        const char* text=d["text"]|"";
+        reply(d.size()==2&&NodeChat::submit(text,strlen(text)),"CHAT_SEND_RESULT");
     }else if(op=="time"){
         if(d.size()!=2||d["unix_time"].is<bool>()||!d["unix_time"].is<uint32_t>()||d["unix_time"].as<uint32_t>()<1700000000||d["unix_time"].as<uint32_t>()>4102444800UL){reply(false,"INVALID_TIME");return;}
         timeval now{};now.tv_sec=d["unix_time"].as<uint32_t>();reply(settimeofday(&now,nullptr)==0,"USB_CLOCK_RESULT");

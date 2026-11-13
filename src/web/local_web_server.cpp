@@ -1,4 +1,7 @@
 #include "local_web_server.h"
+#include "node_chat_page.h"
+#include "../core/node_chat.h"
+#include <esp_system.h>
 #include "../core/config_manager.h"
 #include "../core/system_manager.h"
 #include "../core/network_service.h"
@@ -182,7 +185,65 @@ bool LocalWebServer::authorize(bool mutation){
     return true;
 }
 bool LocalWebServer::body(size_t maximum){if(_server.header("Content-Type").indexOf("application/json")!=0){sendJson(415,"{\"error\":\"application/json required\"}");return false;}if(!_server.hasArg("plain")||_server.arg("plain").length()>maximum){sendJson(413,"{\"error\":\"Missing or oversized body\"}");return false;}return true;}
+bool LocalWebServer::authorizeNodeChat(){
+ const String value=_server.header("Authorization");
+ const bool valid=chatToken[0]&&millis()-chatTouched<1800000&&value.length()==71&&
+  value.startsWith("Bearer ")&&BrowserSessions::same(chatToken,value.c_str()+7);
+ if(!valid){sendJson(401,"{\"error\":\"Sign in to node chat.\"}");return false;}
+ chatTouched=millis();return true;
+}
+void LocalWebServer::registerNodeChat(){
+ _server.on("/node-chat",HTTP_GET,[this](){
+  _server.sendHeader("Cache-Control","no-store");
+  _server.send_P(200,"text/html",nodeChatPage);
+ });
+ _server.on("/api/node-chat/login",HTTP_POST,[this](){
+  const uint32_t now=millis();
+  if(chatFailures>=5&&now-chatBlockedAt<60000){sendJson(429,"{\"error\":\"Try again in one minute.\"}");return;}
+  if(chatFailures>=5)chatFailures=0;
+  if(!body(256))return;
+  JsonDocument doc;
+  const String raw=_server.arg("plain");
+  if(!StrictJson::valid(raw,256)||deserializeJson(doc,raw)||doc.size()!=1||!doc["pin"].is<const char*>()){
+   sendJson(400,"{\"error\":\"PIN required.\"}");return;
+  }
+  if(!NodeChat::verifyPin(doc["pin"])){
+   if(++chatFailures==5)chatBlockedAt=now;
+   sendJson(401,"{\"error\":\"Invalid PIN.\"}");return;
+  }
+  uint8_t random[32];esp_fill_random(random,sizeof(random));
+  for(unsigned i=0;i<sizeof(random);++i)snprintf(chatToken+2*i,3,"%02x",random[i]);
+  chatFailures=0;chatTouched=now;
+  _server.sendHeader("Cache-Control","no-store");
+  sendJson(200,String("{\"token\":\"")+chatToken+"\"}");
+ });
+ _server.on("/api/node-chat/messages",HTTP_GET,[this](){
+  if(!authorizeNodeChat())return;
+  const String since=_server.arg("since");
+  if(since.length()>10||since.indexOf('-')>=0){sendJson(400,"{\"error\":\"Invalid cursor.\"}");return;}
+  for(char c:since)if(c<'0'||c>'9'){sendJson(400,"{\"error\":\"Invalid cursor.\"}");return;}
+  const unsigned long cursor=strtoul(since.c_str(),nullptr,10);
+  sendJson(200,NodeChat::messages(cursor));
+ });
+ _server.on("/api/node-chat/messages",HTTP_POST,[this](){
+  if(!authorizeNodeChat()||!body(256))return;
+  JsonDocument doc;
+  const String raw=_server.arg("plain");
+  if(!StrictJson::valid(raw,256)||deserializeJson(doc,raw)||doc.size()!=1||!doc["text"].is<const char*>()){
+   sendJson(400,"{\"error\":\"Message required.\"}");return;
+  }
+  const auto text=doc["text"].as<JsonString>();
+  if(!NodeChat::validText(text.c_str(),text.size())){
+   sendJson(400,"{\"error\":\"Use 1 to 24 printable ASCII bytes.\"}");return;
+  }
+  if(!NodeChat::submit(text.c_str(),text.size())){
+   sendJson(429,"{\"error\":\"Queue busy, peer unavailable, or send limit reached.\"}");return;
+  }
+  sendJson(202,"{\"state\":\"queued\"}");
+ });
+}
 void LocalWebServer::registerRoutes(){
+    registerNodeChat();
     const char* localHeaders[]={"X-Device-ID","X-Local-Nonce","X-Local-Signature","Content-Type","X-CSRF-Token","Cookie","X-Config-Request","Authorization","Transfer-Encoding"};_server.collectHeaders(localHeaders,9);
     _server.on("/api/v1/local/challenge",HTTP_GET,[this](){handleLocalChallenge();});
     _server.on("/api/v1/local/exchange",HTTP_POST,[this](){handleLocalExchange();},[this](){readLocalBody();});
@@ -251,7 +312,9 @@ void LocalWebServer::registerRoutes(){
     _server.on("/api/system/restart",HTTP_POST,[this](){if(authorize(true))handleRestart();});
     _server.on("/api/system/factory-reset",HTTP_POST,[this](){if(authorize(true))handleFactoryReset();});
     _server.on("/api/v1/packets",HTTP_POST,[this](){handlePacket();});
-    _server.onNotFound([this](){sendJson(404,"{\"error\":\"NOT_FOUND\"}");});
+    _server.onNotFound([this](){if(_server.uri().startsWith("/api/node-chat/")){
+      if(authorizeNodeChat())sendJson(405,"{\"error\":\"METHOD_NOT_ALLOWED\"}");return;
+    }sendJson(404,"{\"error\":\"NOT_FOUND\"}");});
 }
 void LocalWebServer::sendJson(int code,const String& json){_server.sendHeader("Cache-Control","no-store");_server.send(code,"application/json",json);}
 void LocalWebServer::handleRoot(){_server.sendHeader("Content-Encoding","gzip");_server.sendHeader("Cache-Control","no-store");_server.send_P(200,"text/html",(const char*)rootGzip,sizeof(rootGzip));}

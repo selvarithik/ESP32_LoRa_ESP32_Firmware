@@ -1,6 +1,7 @@
 #include "lora_transport.h"
 #include "e220_core.h"
 #include "compact_radio.h"
+#include "../core/node_chat.h"
 #include <cmath>
 #include <time.h>
 #include "e220_readback.h"
@@ -74,11 +75,12 @@ bool unpack(const uint8_t* bytes,size_t n,Message& m){JsonDocument d;if(deserial
 bool isMaster(){return config.role==DeviceRole::MASTER;}
 bool pollType(PacketType type){
  return type==PacketType::HELLO||type==PacketType::ACK||type==PacketType::COMMAND||
-  type==PacketType::CONFIG_GET||type==PacketType::CONFIG_UPDATE;
+  type==PacketType::CONFIG_GET||type==PacketType::CONFIG_UPDATE||type==PacketType::STATUS;
 }
 bool validPoll(const Message& m,const String& sender){
  if(!pollType(m.type))return false;
  JsonDocument body;if(deserializeJson(body,m.payload))return false;
+ if(m.type==PacketType::STATUS)return false; // Chat is v3 only.
  if(m.type==PacketType::HELLO)return m.source==sender&&body["device_id"].as<String>()==sender&&body["role"]=="MASTER";
  if(m.type==PacketType::ACK)return m.source==sender&&!m.correlationId.isEmpty()&&body["received_message_id"].as<String>()==m.correlationId;
  return (m.source==sender||m.source=="GATEWAY")&&body["command"].is<const char*>()&&body["arguments"].is<JsonObject>()&&
@@ -114,6 +116,14 @@ String commandId(const uint8_t* bytes){
 uint8_t compactKind(const Message& m,CompactRadio::Frame& f){
  JsonDocument d;if(deserializeJson(d,m.payload))return 0;
  using namespace CompactRadio;
+ if(m.type==PacketType::STATUS&&d["chat_id"].is<uint32_t>()){
+  E220Core::put32(f.data,d["chat_id"]);
+  if(d["chat_receipt"]==true)return TextReceipt;
+  const char* value=d["chat_text"]|"";
+  const size_t count=strlen(value);
+  if(!NodeChat::validText(value,count))return 0;
+  f.data[4]=count;memcpy(f.data+5,value,count);return Text;
+ }
  if(isMaster()){
   if(m.type==PacketType::HELLO){
    f.data[0]=d["register"]==true;
@@ -158,6 +168,20 @@ bool compactMessage(const CompactRadio::Frame& f,Message& m){
  m.source=m.origin=sender;m.destination=m.nextHop=config.device_id;
  m.messageId=generateMessageId();m.radioHopCount=1;m.radioMaxHops=5;m.radioWireVersion=Version;
  JsonDocument d;
+ if(f.kind==Text||f.kind==TextReceipt){
+  const uint32_t id=E220Core::get32(f.data);
+  if(!id)return false;
+  m.type=PacketType::STATUS;
+  d["chat_id"]=id;
+  if(f.kind==TextReceipt)d["chat_receipt"]=true;
+  else{
+   char value[25]{};
+   const size_t size=f.data[4];
+   if(!NodeChat::validText(reinterpret_cast<const char*>(f.data+5),size))return false;
+   memcpy(value,f.data+5,size);d["chat_text"]=value;
+  }
+  serializeJson(d,m.payload);return true;
+ }
  if(!isMaster()){
   if(f.kind==Poll){
    m.type=PacketType::HELLO;d["device_id"]=sender;d["role"]="MASTER";d["register"]=f.data[0]!=0;
@@ -497,6 +521,8 @@ bool LoRaTransport::send(const Message& m){
  compactTx=CompactRadio::Frame{};
  if(compactPeer(address)&&(isMaster()||compactReplyAllowed))compactTx.kind=compactKind(m,compactTx);
  useCompactTx=compactTx.kind!=0;
+ if(m.type==PacketType::STATUS&&m.payload.indexOf("\"chat_id\"")>=0&&!useCompactTx)return false;
+ if(m.type==PacketType::STATUS&&isMaster()&&!useCompactTx)return false;
  txLength=useCompactTx?1:pack(m,txData);if(!txLength)return false;
  const uint8_t step=E220Core::span(observed.packet);
  if((txLength+step-1)/step>255){txLength=0;return false;}

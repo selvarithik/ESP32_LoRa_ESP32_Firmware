@@ -1,4 +1,5 @@
 #include "../src/communication/compact_radio.h"
+#include "../src/core/node_chat.h"
 #include "../src/communication/e220_core.h"
 #include "../src/config/hardware_profile.h"
 #include <assert.h>
@@ -259,6 +260,17 @@ static void capturedV3Rssi(){
 }
 int main(){
  capturedV3Rssi();
+ assert(NodeChat::validText("<>&\"",4));
+ assert(!NodeChat::validText("",0)&&!NodeChat::validText("a\nb",3));
+ assert(!NodeChat::validText("\xc3\xa9",2));
+ assert(NodeChat::validText("abcdefghijklmnopqrstuvwx",24));
+ assert(!NodeChat::validText("abcdefghijklmnopqrstuvwxy",25));
+ CompactRadio::Frame text;
+ text.kind=CompactRadio::Text;text.token=1;text.data[4]=24;
+ uint8_t chat[64];
+ const size_t size=CompactRadio::pack(text,chat);
+ assert(size==51&&CompactRadio::unpack(chat,size,text)&&text.data[4]==24);
+
  compactFrames();
  assert(!E220Core::freshReception(true,false,100,0,1000));
  assert(!E220Core::freshReception(false,true,100,90,1000));

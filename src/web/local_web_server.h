@@ -18,6 +18,11 @@ private:
     LocalHttpServer _server{80};
 
     void registerRoutes();
+    void registerNodeChat();
+    bool authorizeNodeChat();
+    char chatToken[65]{};
+    uint32_t chatTouched=0,chatBlockedAt=0;
+    unsigned chatFailures=0;
 
     void handleRoot();
     void handleStatus();

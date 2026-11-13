@@ -1,5 +1,9 @@
 #include "../config/hardware_profile.h"
 #include "../config/firmware_version.h"
+#include "node_chat.h"
+#include <Preferences.h>
+#include <mbedtls/md.h>
+#include <mbedtls/pkcs5.h>
 #include "network_service.h"
 #include "../config/transport_trial.h"
 #include "../config/mqtt_staging.h"
@@ -91,6 +95,72 @@ bool upstream(const Message& input) {
  if(direct)return track(m,c.server_host,true);
  return !c.mesh_key.isEmpty()&&!c.master_id.isEmpty()&&track(m,c.master_host);
 }
+struct ChatEntry {
+ uint32_t cursor=0,id=0,created=0;
+ String text,peer,packet;
+ const char* state="queued";
+ bool outgoing=false;
+};
+ChatEntry chatEntries[12];
+uint32_t chatCursor=0,lastChatSend=0;
+String chatVerifier;
+unsigned chatActive=0;
+bool sameDigest(const String& a,const String& b){
+ if(a.length()!=64||b.length()!=64)return false;
+ uint8_t diff=0;
+ for(unsigned i=0;i<64;++i)diff|=a[i]^b[i];
+ return diff==0;
+}
+String pinDigest(const char* pin){
+ if(!pin||strlen(pin)<8||strlen(pin)>24)return "";
+ uint8_t digest[32];
+ const String salt=configManager.get().device_id;
+ mbedtls_md_context_t context;
+ mbedtls_md_init(&context);
+ const auto* algorithm=mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+ if(mbedtls_md_setup(&context,algorithm,1)){mbedtls_md_free(&context);return "";}
+ const int result=mbedtls_pkcs5_pbkdf2_hmac(&context,
+     reinterpret_cast<const unsigned char*>(pin),strlen(pin),
+     reinterpret_cast<const unsigned char*>(salt.c_str()),salt.length(),10000,32,digest);
+ mbedtls_md_free(&context);
+ if(result)return "";
+ char hex[65];
+ for(unsigned i=0;i<32;++i)snprintf(hex+2*i,3,"%02x",digest[i]);
+ return hex;
+}
+ChatEntry& chatSlot(){
+ for(auto& entry:chatEntries)if(!entry.cursor)return entry;
+ ChatEntry* oldest=nullptr;
+ for(auto& entry:chatEntries)
+  if(strcmp(entry.state,"queued")&&strcmp(entry.state,"sent")&&(!oldest||entry.cursor<oldest->cursor))oldest=&entry;
+ return *oldest; // At most four live sends.
+}
+void chatState(ChatEntry& entry,const char* state){
+ if(entry.outgoing&&(!strcmp(entry.state,"queued")||!strcmp(entry.state,"sent"))&&
+    (strcmp(state,"queued")&&strcmp(state,"sent"))&&chatActive)--chatActive;
+ entry.state=state;
+ entry.cursor=++chatCursor;
+}
+bool chatReceive(const Message& message,const String& remote,JsonObjectConst body){
+ if(message.radioWireVersion!=3||!remote.startsWith("RADIO:")||!body["chat_id"].is<uint32_t>())return false;
+ const uint32_t id=body["chat_id"];
+ if(body["chat_receipt"]==true){
+  for(auto& entry:chatEntries)
+   if(entry.outgoing&&entry.id==id&&entry.peer==message.source&&!strcmp(entry.state,"sent"))chatState(entry,"delivered");
+  return true;
+ }
+ const char* value=body["chat_text"]|"";
+ if(!NodeChat::validText(value,strlen(value)))return true;
+ bool known=false;
+ for(const auto& entry:chatEntries)if(entry.cursor&&!entry.outgoing&&entry.id==id&&entry.peer==message.source)known=true;
+ if(!known){
+  auto& entry=chatSlot();entry=ChatEntry{};entry.id=id;entry.peer=message.source;entry.text=value;
+  chatState(entry,"delivered");
+ }
+ String receipt="{\"chat_receipt\":true,\"chat_id\":"+String(id)+"}";
+ track(make(PacketType::STATUS,message.source,receipt),remote);
+ return true;
+}
 void complete(const String& id,const String& source) {for(auto& p:pending)if(p.used&&p.command&&p.packet.messageId==id&&p.packet.destination==source)p.used=false;}
 String bodyStatus() {
     JsonDocument d;auto& c=configManager.get();d["device_id"]=c.device_id;d["device_name"]=c.device_name;d["role"]=configManager.roleString();d["master_id"]=c.role==DeviceRole::MASTER?c.device_id:masterId();d["node_address"]=c.node_address;
@@ -157,7 +227,7 @@ void queueRadioPoll(uint32_t now){
     auto& c=configManager.get();
     if(c.role!=DeviceRole::MASTER||!loraTransport.canPoll()||!RadioTurn::due(now,radioPollAt))return;
     for(const auto& item:pending)if(item.used&&!item.acknowledged&&item.host.startsWith("RADIO:")&&
-        (item.inFlight||RadioTurn::due(now,item.next))
+        (item.inFlight||RadioTurn::due(now,item.next))&&(item.packet.type!=PacketType::STATUS||loraTransport.supportsCompact(item.host.substring(6)))
 #ifdef CONDUCTED_BENCH
         &&loraTransport.supportsCompact(item.host.substring(6))
 #endif
@@ -301,6 +371,60 @@ void NetworkService::begin(){
 #endif
     scheduleRadioDiscovery();
 }
+bool NodeChat::configurePin(const char* pin){
+ const String digest=pinDigest(pin);
+ if(digest.isEmpty())return false;
+ Preferences store;
+ if(!store.begin("node_chat",false))return false;
+ const bool saved=store.putString("pin",digest)==digest.length();
+ if(saved)chatVerifier=digest;
+ return saved;
+}
+bool NodeChat::verifyPin(const char* pin){
+ if(chatVerifier.isEmpty()){
+  Preferences store;
+  if(store.begin("node_chat",true))chatVerifier=store.getString("pin","");
+ }
+ return sameDigest(pinDigest(pin),chatVerifier);
+}
+bool NodeChat::submit(const char* text,size_t size){
+ if(!validText(text,size)||chatActive>=4||(lastChatSend&&millis()-lastChatSend<5000))return false;
+ const auto& config=configManager.get();
+ String destination=masterId();
+ if(config.role==DeviceRole::MASTER){
+  destination="";
+  for(const auto& peer:peers)if(peer.host=="RADIO:"+peer.id){destination=peer.id;break;}
+ }
+ if(destination.isEmpty())return false;
+ uint32_t id=esp_random();
+ if(!id)id=1;
+ JsonDocument doc;doc["chat_id"]=id;doc["chat_text"]=text;
+ String body;serializeJson(doc,body);
+ auto packet=make(PacketType::STATUS,destination,body);
+ if(!track(packet,"RADIO:"+destination))return false;
+ auto& entry=chatSlot();
+ entry=ChatEntry{};entry.id=id;entry.text=text;entry.peer=destination;
+ entry.packet=packet.messageId;entry.outgoing=true;entry.created=millis();
+ entry.cursor=++chatCursor;++chatActive;lastChatSend=millis();
+ return true;
+}
+String NodeChat::messages(uint32_t since){
+ JsonDocument result;
+ auto entries=result["messages"].to<JsonArray>();
+ for(;;){
+  const ChatEntry* next=nullptr;
+  for(const auto& entry:chatEntries)if(entry.cursor>since&&(!next||entry.cursor<next->cursor))next=&entry;
+  if(!next)break;
+  auto out=entries.add<JsonObject>();
+  out["id"]=next->id;out["text"]=next->text;out["peer"]=next->peer;
+  out["outgoing"]=next->outgoing;out["state"]=next->state;
+  since=next->cursor;
+ }
+ result["since"]=since;
+ loraTransport.appendSignalStatus(result["signal"].to<JsonObject>());
+ loraTransport.appendRadioMetrics(result["airtime"].to<JsonObject>());
+ String raw;serializeJson(result,raw);return raw;
+}
 bool NetworkService::accept(const Message& m,const String& remote,bool gateway) {
     auto& c=configManager.get();
     if(m.source==c.device_id)return false;
@@ -360,6 +484,7 @@ void NetworkService::loop() {
         for(auto& p:pending)if(ok&&p.used&&p.packet.messageId==delivered&&p.packet.type==PacketType::ACK&&p.packet.correlationId==operationJob.request.messageId&&operationJob.type=="WIFI_RECONNECT")operationJob.acceptance=true;
         for(auto& p:pending)if(p.used&&p.packet.messageId==delivered&&p.gateway==viaGateway){
             p.inFlight=false;
+            for(auto& entry:chatEntries)if(entry.outgoing&&entry.packet==delivered&&!ok&&loraTransport.airtimeRefusals())chatState(entry,"failed");
             if(ok&&p.packet.payload=="{\"radio_config_report\":true}")reportedRadioConfig=loraTransport.radioConfigFingerprint();
             if(p.host.startsWith("RADIO:")&&!ok)
                 p.next=RadioTurn::retryAt(now+(c.role==DeviceRole::NODE?RadioTurn::ReplyMs:0),esp_random());
@@ -382,6 +507,7 @@ void NetworkService::loop() {
         if(!accept(m,remote,gateway))continue;
         JsonDocument incomingBody;deserializeJson(incomingBody,m.payload);
         bool radio=remote.startsWith("RADIO:");
+        if(radio&&chatReceive(m,remote,incomingBody.as<JsonObjectConst>()))continue;
         if(c.role==DeviceRole::MASTER&&!gateway&&!radio&&m.type==PacketType::STATUS&&
             incomingBody["radio_airtime_status"]=="BUDGET_EXHAUSTED"&&listed(m.source)){
             slaveBudgetNotice=m;
@@ -509,10 +635,13 @@ void NetworkService::loop() {
         if(DeliveryCore::discardForPower(powerManager.draining(),p.packet.source==c.device_id,p.command,p.packet.type==PacketType::TELEMETRY,p.packet.type==PacketType::HEARTBEAT,p.packet.type==PacketType::HELLO,p.packet.type==PacketType::STATUS)){p=Pending{};++failed;}else ++work;
     }powerManager.loop(work,transportManager.idle());
     now=millis(); // Packets queued above may have a newer timestamp than the loop entry.
+    for(auto& entry:chatEntries)if(entry.outgoing&&
+        (!strcmp(entry.state,"queued")||!strcmp(entry.state,"sent"))&&
+        now-entry.created>RadioAirtime::ReplyAssemblyMs)chatState(entry,"failed");
     for(auto& p:pending)if(p.used) {
         if(p.inFlight)continue;
         const bool retainedReply=p.host.startsWith("RADIO:")&&(p.command||p.packet.type==PacketType::ACK||
-            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO||p.packet.payload=="{\"radio_config_report\":true}");
+            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO||p.packet.payload.indexOf("\"chat_id\"")>=0||p.packet.payload=="{\"radio_config_report\":true}");
         if(now-p.created>(retainedReply?RadioAirtime::ReplyAssemblyMs:c.message_max_age_ms)){
             p.used=false;++failed;latestState=p.command?"TIMEOUT":latestState;continue;
         }
@@ -529,7 +658,7 @@ void NetworkService::loop() {
         }else if(radio&&!p.command)rank=p.packet.type==PacketType::ACK?1:2;
         if(rank!=priority)continue;
 #ifdef CONDUCTED_BENCH
-        if(radio&&c.role==DeviceRole::MASTER&&p.command&&!loraTransport.supportsCompact(p.host.substring(6)))continue;
+        if(radio&&c.role==DeviceRole::MASTER&&(p.command||p.packet.type==PacketType::STATUS)&&!loraTransport.supportsCompact(p.host.substring(6)))continue;
 #endif
         if(!DeliveryCore::eligible(p.inFlight,p.command,p.acknowledged,now,p.next))continue;
         if(radio?!RadioTurn::mayAttempt(p.attempts,c.retry_count):p.attempts>c.retry_count){
@@ -537,6 +666,7 @@ void NetworkService::loop() {
         }
         if(transportManager.send(p.packet,p.host,p.gateway)){
             p.inFlight=true;++p.attempts;
+            for(auto& entry:chatEntries)if(entry.outgoing&&entry.packet==p.packet.messageId&&!strcmp(entry.state,"queued"))chatState(entry,"sent");
             p.next=radio?RadioTurn::retryAt(now+RadioTurn::ReplyMs,esp_random()):now+c.command_timeout_ms*min(8,1<<min(3,(int)p.attempts-1));
             if(p.command){latestCommand=p.packet.messageId;latestState="SENT";}
         }else if(!radio)p.next=now+1000;
