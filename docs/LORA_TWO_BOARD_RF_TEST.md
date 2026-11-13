@@ -34,3 +34,11 @@ Leave unmeasured items pending. A UART register read, UART transmit count or Gat
 - Master control PING `CMD-72E3E9A9BBC2` and Slave PING `CMD-653ED4E1333E` both timed out without a device ACK or execution response after the reconnect. Fresh Master telemetry verifies the uplink during the retest. The control PING does not establish a working command downlink.
 - USB status still reported zero valid radio receives on both boards. Slave COM8 reported 15 AUX-low samples out of 49 while its transmit count increased by 17 UART fragments. This is module activity evidence. RF power at the far end of the cable remains unmeasured.
 - The last stored Slave bus and shunt readings were from direct HTTP before the conducted test. The radios remained active and the Slave remained Master-only for the bench.
+
+## Acceptance rerun, 13 November 2026
+
+- Both devices run the same verified application build from firmware commit `0f0ffe2`. USB identities for this run were Master COM10 and Slave COM8.
+- Saved radio settings, Master assignment, peer enrollment and matching application mesh credentials were checked against the encrypted backups. No settings were changed during the rerun.
+- Gateway release `e64cc82` returned accepted ACKs and execution responses over MQTT for Master PING `CMD-4F9B1074685F`, radio status `CMD-2462ED270C65`, saved configuration `CMD-75BA31F81720` and routes `CMD-ED5C92314006`. The Master returned an empty route list. The Gateway also persisted fresh Master INA219 telemetry via MQTT.
+- Slave PING `CMD-74DC18264644` timed out with neither an ACK nor a response. Both boards still reported zero valid received messages and no packet RSSI. The Slave read 4.452 V bus voltage and 0.81 mV shunt voltage locally. The Gateway had no fresh Slave reading.
+- Full LoRa acceptance still needs a known-good conducted RF path and an independent signal measurement at each receiver. After valid reception, rerun the Slave PING, check a new relayed INA219 sample and test link recovery.

@@ -16,6 +16,8 @@ primary=re.findall(r'"([A-Z_]+)"',re.search(r'Primary\[\]=\{(.*?)\}',catalog)[1]
 assert tuple(primary)==contract.PRIMARY_COMMANDS and len(primary)==21
 local=(root/'src/web/local_web_server.cpp').read_text(encoding='utf-8')
 assert re.findall(r'<option>(.*?)</option>',re.search(r'<select id="command">(.*?)</select>',local)[1])==primary
+# The Gateway composer uses a PING placeholder until its authenticated API loads.
 page=(gateway/'dashboard/templates/command_center.html').read_text(encoding='utf-8')
-assert re.findall(r'<option value="([A-Z_]+)"',re.search(r'<select id="cmd-type-select".*?>(.*?)</select>',page,re.S)[1])==primary
-print('PASS exactly 21 primary commands shared by firmware, Gateway and both command UIs')
+selector=re.search(r'<select id="cmd-type-select".*?>(.*?)</select>',page,re.S)[1]
+assert re.findall(r'<option value="([A-Z_]+)"',selector)==['PING']
+print('PASS primary registry parity, ESP32 command menu and Gateway PING placeholder')
