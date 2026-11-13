@@ -35,3 +35,18 @@ Firmware `e44501b` was flashed Slave first and Master second. Both application w
 Command `CMD-6DDD0B4F6B2F` was dispatched at 19:16:07 while the Master clock was unsynchronized. USB time synchronization at 19:20:06 restored TLS. The Gateway stored fresh Slave INA219 via the Master at 19:20:41.305916 (4.648 V bus and 0.85 mV shunt, Master RSSI n/a, raw FF). No manual PING retry was issued. The Gateway showed no ACK or execution response in the new run. In the preceding v3 run, command `CMD-C4DD6C44470C` recorded its ACK at 18:49:58.350733 and execution response at 18:50:58.541078. Those are results from the prior image.
 
 The follow-up Master monitoring build compiled offline. Its full web and MQTT reporting requires a fresh end-to-end verification. Node-to-node chat and per-node retained MQTT monitoring remain incomplete.
+
+
+## November 14, 2026 conducted acceptance (IST)
+
+One Gateway PING, `CMD-23F28DF0E544`, was dispatched at 00:16:48.903720 after the Master reported verified TLS and ready MQTT subscriptions. No manual retry was sent. The public register readback matched `C1 00 06 00 00 62 03 10 83` on both nodes.
+
+| Event | Gateway timestamp (IST) | Evidence |
+| --- | --- | --- |
+| Slave ACK | 00:17:49.886617 | COM10 raw RSSI `00`, displayed as n/a |
+| Slave execution response | 00:18:50.077066 | Gateway state COMPLETED, `ok=true`, `RADIO:ESP32-10777D842178`, verified MQTT. COM10 raw RSSI `00`, displayed as n/a |
+| Fresh Slave INA219 | 00:19:50.017334 | 4.680 V bus, 0.26 mV shunt, source MQTT. COM10 raw RSSI `00`, displayed as n/a |
+
+At 00:20:00 the Master had sent 6 fragments totaling 18.768 s modeled airtime. The Slave had sent 5 fragments totaling 11.096 s and last measured the Master at −34 dBm. Both nodes recorded zero rejects, auth failures and budget refusals at that checkpoint.
+
+The firmware and Gateway source are published as a conducted release candidate. Authenticated node chat, full per-node retained MQTT status and the complete live monitoring view still require acceptance. Real airtime, RF bandwidth, key persistence, regulatory approval and over-the-air operation are outside this evidence.
