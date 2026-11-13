@@ -7,8 +7,15 @@
 #include <random>
 #include "../src/communication/radio_turn.h"
 #include "../src/communication/radio_airtime.h"
+#include "../src/communication/e220_readback.h"
 
 static void rollingAirtimeAndFragmentCap(){
+ assert(!E220Readback::settled(700,200,100,false,true));
+ assert(!E220Readback::settled(699,200,100,true,true));
+ assert(!E220Readback::settled(700,200,100,true,false));
+ assert(E220Readback::settled(700,200,100,true,true));
+ assert(!E220Readback::settled(3700,3100,100,true,true));
+ assert(E220Readback::settled(504,4,UINT32_MAX-10,true,true));
  using namespace RadioAirtime;
  static_assert(WorstFragmentUs==6754304&&WorstPollUs==13508608&&WorstReplyUs==13508608,"Unexpected airtime model");
  static_assert(ExchangesPerHour==2&&ProductionPollIntervalMs==1800000,"Unsafe production cadence");

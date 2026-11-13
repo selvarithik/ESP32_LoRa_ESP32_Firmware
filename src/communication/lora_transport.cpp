@@ -1,5 +1,6 @@
 #include "lora_transport.h"
 #include "e220_core.h"
+#include "e220_readback.h"
 #include "radio_turn.h"
 #include "radio_airtime.h"
 #include "../config/hardware_profile.h"
@@ -15,12 +16,16 @@ namespace {
 HardwareSerial normalUart(2),diagnosticUart(1);bool useDiagnosticUart=false;
 HardwareSerial& radioUart(){return useDiagnosticUart?diagnosticUart:normalUart;}
 DeviceConfig config;
-enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Writing,BenchKey,Restoring,Ready,SleepSwitch,Sleeping,Fault};
+enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Writing,BenchKey,PostWrite,Restoring,Ready,SleepSwitch,Sleeping,Fault};
 State state=State::Off;const char* error="DISABLED";bool initialized=false,probeOnly=false,restoreHigh0=false,restoreHigh1=false;
 bool probePinsConfigured=false,settingsQuerySent=false;const char* probePhase="NOT_STARTED";
 uint32_t since=0,auxSince=0,nextTx=0,txStarted=0;bool auxHigh=false;
 E220Core::Settings observed;bool observedValid=false;uint8_t desiredBytes[6]{};bool wrote=false;unsigned registerWrites=0;int lastRssi=0;bool hasRssi=false,txAwake=false;uint32_t lastRfRxAt=0;uint32_t txAwakeAt=0;
 uint8_t settingsBytes[9]{};unsigned settingsLength=0;E220Core::SettingsReader settingsReader;unsigned settingsAttempts=0;
+uint32_t writeAt=0,writeEdge=0;
+bool postWrite=false;
+volatile uint32_t auxRiseAt=0,auxRiseCount=0;
+void IRAM_ATTR onAuxRise(){auxRiseAt=millis();++auxRiseCount;}
 uint8_t ownMac[6]{},target[6]{};uint32_t transfer=0,rxCount=0,txCount=0,rejected=0,timeouts=0,authFailures=0,completed=0;
 E220Core::Assembler assemblies;
 uint8_t encoded[202]{},raw[200]{};
@@ -106,13 +111,25 @@ bool LoRaTransport::requestProbe(bool readOnly,uint8_t diagnosticPort){
  normalUart.end();diagnosticUart.end();useDiagnosticUart=diagnosticPort==1;
  pinMode(config.lora_aux_pin,INPUT);pinMode(config.lora_m0_pin,INPUT);pinMode(config.lora_m1_pin,INPUT);restoreHigh0=digitalRead(config.lora_m0_pin);restoreHigh1=digitalRead(config.lora_m1_pin);digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);pinMode(config.lora_m0_pin,OUTPUT);pinMode(config.lora_m1_pin,OUTPUT);probePinsConfigured=true;settingsQuerySent=false;settingsLength=0;settingsAttempts=0;settingsReader.reset();probePhase="WAIT_IDLE_AUX";radioUart().end();radioUart().setRxBufferSize(512);radioUart().setTxBufferSize(256);radioUart().begin(9600,SERIAL_8N1,config.lora_rx_pin,config.lora_tx_pin);gpio_pullup_en((gpio_num_t)config.lora_rx_pin);radioUart().setRxTimeout(2);radioUart().setRxFIFOFull(1);wrote=false;observedValid=false;observed=E220Core::Settings{};state=State::WaitIdle;since=millis();auxSince=since;auxHigh=false;error="INSPECTING";return true;}
 void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==State::Fault)return;bool high=auxReady();if(high&&!auxHigh)auxSince=now;auxHigh=high;
+ if(state==State::PostWrite){
+  const uint32_t edge=auxRiseCount,rise=auxRiseAt;
+  if(E220Readback::settled(now,rise,writeAt,edge!=writeEdge,high)){
+   if(!digitalRead(config.lora_m0_pin)||!digitalRead(config.lora_m1_pin)){restore("SETTINGS_CONFIG_MODE_LOST");return;}
+#ifdef CONDUCTED_BENCH
+   Serial.printf("[BENCH] %lu AUX rise=%lu, write=%lu, M0=1 M1=1\n",(unsigned long)now,(unsigned long)rise,(unsigned long)writeAt);
+#endif
+   detachInterrupt(config.lora_aux_pin);
+   settingsAttempts=0;postWrite=true;since=now-E220Readback::RetryGapMs;state=State::WaitMode;
+  }else if(now-writeAt>=E220Readback::AuxTimeoutMs)restore("SETTINGS_POST_WRITE_AUX_TIMEOUT");
+  return;
+ }
 #ifdef CONDUCTED_BENCH
  if(state==State::BenchKey){
   while(settingsLength<sizeof(BenchKeyEcho)&&radioUart().available())settingsBytes[settingsLength++]=radioUart().read();
   if(settingsLength==sizeof(BenchKeyEcho)){
    printBenchBytes("KEY ECHO",settingsBytes,settingsLength);
    if(memcmp(settingsBytes,BenchKeyEcho,sizeof(BenchKeyEcho))){restore("BENCH_KEY_WRITE_REJECTED");return;}
-   benchKeyWritten=true;state=State::WaitMode;since=auxSince=now;return;
+   benchKeyWritten=true;state=State::PostWrite;return;
   }
   if(now-since>3000)restore("BENCH_KEY_WRITE_TIMEOUT");
   return;
@@ -120,16 +137,39 @@ void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==St
 #endif
  if(state==State::Sleeping)return;
  if(state==State::SleepSwitch){if(high&&now-since>=5&&now-auxSince>=2)state=State::Sleeping;else if(now-since>3000){state=State::Fault;error="SLEEP_MODE_TIMEOUT";}return;}
+ if(state==State::Reading&&now-since>=E220Readback::ReadTimeoutMs){
+  if(settingsReader.total==0&&settingsAttempts<E220Readback::MaxAttempts){state=State::WaitMode;probePhase="RETRY_CONFIG_READ";since=now-E220Readback::RetryGapMs;return;}
+  if(settingsReader.total==0)restore("SETTINGS_READ_TIMEOUT");
+  else{
+#ifdef CONDUCTED_BENCH
+   printBenchBytes("UNEXPECTED READ",settingsReader.bytes,settingsReader.length);
+#endif
+   restore("INVALID_PUBLIC_SETTINGS");
+  }
+  return;
+ }
  if(state!=State::Ready&&state!=State::Restoring&&now-since>3000){
-  if(state==State::Reading&&!wrote&&settingsAttempts<3){state=State::WaitMode;probePhase="RETRY_CONFIG_READ";since=now;auxSince=now;return;}
   ++timeouts;restore(state==State::Reading&&settingsReader.total?(settingsReader.total<9?"SETTINGS_PARTIAL_RESPONSE":"INVALID_PUBLIC_SETTINGS"):"SETTINGS_READ_TIMEOUT");return;
  }
  if(state==State::WaitIdle&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,HIGH);digitalWrite(config.lora_m1_pin,HIGH);state=State::WaitMode;probePhase="WAIT_CONFIG_AUX";since=now;auxSince=now;return;}
- if(state==State::WaitMode&&high&&now-since>=100&&now-auxSince>=20){for(unsigned drain=0;drain<512&&radioUart().available();++drain)radioUart().read();const uint8_t query[]={0xc1,0,6};if(radioUart().availableForWrite()<3)return;if(radioUart().write(query,3)!=3){restore("SETTINGS_QUERY_WRITE_FAILED");return;}++settingsAttempts;settingsReader.reset();settingsQuerySent=true;settingsLength=0;probePhase="READ_PUBLIC_REGISTERS";state=State::Reading;since=now;return;}
+ if(state==State::WaitMode&&high&&now-since>=100&&now-auxSince>=20){
+  if(!digitalRead(config.lora_m0_pin)||!digitalRead(config.lora_m1_pin)){restore("SETTINGS_CONFIG_MODE_LOST");return;}
+  for(unsigned drain=0;drain<512&&radioUart().available();++drain)radioUart().read();
+  const uint8_t query[]={0xc1,0,6};
+  if(radioUart().availableForWrite()<3)return;
+  // A new transaction must never inherit validity from the pre-write read.
+  settingsReader.reset();observedValid=false;settingsLength=0;
+  if(radioUart().write(query,3)!=3){restore("SETTINGS_QUERY_WRITE_FAILED");return;}
+  ++settingsAttempts;settingsQuerySent=true;probePhase="READ_PUBLIC_REGISTERS";state=State::Reading;since=now;
+#ifdef CONDUCTED_BENCH
+  Serial.printf("[BENCH] %lu READ C1 00 06 attempt=%u post_write=%d AUX=1 M0=1 M1=1\n",(unsigned long)now,settingsAttempts,postWrite);
+#endif
+  return;
+ }
  if(state==State::Writing){for(unsigned n=0;n<32&&radioUart().available()&&settingsLength<9;++n)settingsBytes[settingsLength++]=radioUart().read();if(settingsLength<9)return;if(settingsBytes[0]!=0xc1||settingsBytes[1]!=0||settingsBytes[2]!=6||memcmp(settingsBytes+3,desiredBytes,6)){restore("REGISTER_WRITE_REJECTED");return;}observedValid=false;
   settingsReader.reset();settingsLength=0;
   // Wait for AUX and issue a separate read after the persistent-write echo.
-  state=State::WaitMode;probePhase="WAIT_POST_WRITE_AUX";since=now;auxSince=now;return;}
+  state=State::PostWrite;probePhase="WAIT_POST_WRITE_AUX";return;}
  if(state==State::Reading){
   for(unsigned budget=0;budget<32&&radioUart().available();++budget){if(settingsReader.add(radioUart().read(),observed)){observedValid=true;break;}}
   settingsLength=settingsReader.length;memcpy(settingsBytes,settingsReader.bytes,settingsLength);
@@ -141,8 +181,9 @@ void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==St
   Serial.println("[BENCH] STOP: unexpected public registers or work mode");
   restore("BENCH_UNEXPECTED_PROFILE_NO_RF");return;
  }
- if(!benchKeyWritten){
+ if(isMaster()&&!benchKeyWritten){
   if(radioUart().availableForWrite()<int(sizeof(BenchKeyWrite)))return;
+  attachInterrupt(config.lora_aux_pin,onAuxRise,RISING);writeEdge=auxRiseCount;writeAt=millis();
   if(radioUart().write(BenchKeyWrite,sizeof(BenchKeyWrite))!=sizeof(BenchKeyWrite)){restore("BENCH_KEY_WRITE_FAILED");return;}
   ++registerWrites;settingsLength=0;state=State::BenchKey;since=now;return;
  }
@@ -150,7 +191,10 @@ void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==St
  if(!matches()){
  if(!config.lora_apply_settings||wrote){restore("SETTINGS_MISMATCH_NO_RF");return;}
  auto desired=observed;desired.address=(uint16_t(config.lora_address_high)<<8)|config.lora_address_low;desired.baud=config.lora_baud;desired.channel=config.lora_channel;desired.airRate=config.lora_air_rate;desired.power=config.lora_tx_power;desired.packet=config.lora_packet_bytes;desired.fixed=config.lora_fixed_mode;desired.rssi=config.lora_rssi;desired.lbt=config.lora_lbt;desired.worMs=config.lora_wor_cycle_ms;
- if(!E220Core::encodeSettings(desired,settingsBytes+3,desiredBytes)){restore("INVALID_REGISTER_CONFIGURATION");return;}uint8_t write[9]={0xc0,0,6};memcpy(write+3,desiredBytes,6);if(radioUart().availableForWrite()<9)return;radioUart().write(write,9);wrote=true;++registerWrites;settingsLength=0;state=State::Writing;since=now;return;}
+ if(!E220Core::encodeSettings(desired,settingsBytes+3,desiredBytes)){restore("INVALID_REGISTER_CONFIGURATION");return;}uint8_t write[9]={0xc0,0,6};memcpy(write+3,desiredBytes,6);if(radioUart().availableForWrite()<9)return;
+ attachInterrupt(config.lora_aux_pin,onAuxRise,RISING);writeEdge=auxRiseCount;writeAt=millis();
+ if(radioUart().write(write,9)!=sizeof(write)){restore("REGISTER_WRITE_FAILED");return;}
+ wrote=true;++registerWrites;settingsLength=0;state=State::Writing;since=now;return;}
 #endif
 if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return;}unsigned mode=E220Core::mode(config.lora_work_mode.c_str());digitalWrite(config.lora_m0_pin,mode&1);digitalWrite(config.lora_m1_pin,(mode>>1)&1);radioUart().updateBaudRate(observed.baud);state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
  if(state==State::Restoring){if(high&&now-since>=5&&now-auxSince>=2){if(!strcmp(error,"STARTING_NORMAL_MODE")){state=State::Ready;initialized=true;error="NONE";logger.info("LORA","Read-only settings check passed; normal mode ready (hardware link unverified)");}else{state=State::Fault;radioUart().end();}}else if(now-since>3000){state=State::Fault;radioUart().end();error="MODE_RESTORE_TIMEOUT";++timeouts;}return;}
