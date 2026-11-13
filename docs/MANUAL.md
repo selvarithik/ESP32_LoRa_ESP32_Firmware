@@ -52,3 +52,16 @@ At 00:20:00 the Master had sent 6 fragments totaling 18.768 s modeled airtime. T
 The firmware and Gateway source are published as a conducted release candidate. Authenticated node chat, full per-node retained MQTT status and the complete live monitoring view still require acceptance. Real airtime, RF bandwidth, key persistence, regulatory approval and over-the-air operation are outside this evidence.
 
 **Known limitation: Master-side RSSI unverified.** The captured v3 ACK, response and INA219 frames each end with delimiter 00 followed by a raw RSSI byte of 00. The parser stores the second byte and reports n/a. Earlier FF and FE trailers were also visible in raw UART captures. The module-level cause remains unconfirmed.
+
+
+## Authenticated node chat
+
+Use a trusted LAN. The ESP32 chat page uses plain HTTP. Provision a different PIN on each node through physical USB using a `chat_pin` commissioning request. Use 8–24 characters, keep the PIN in your local password manager, and never put it in Git. The node stores a verifier in NVS. Open `/node-chat` at each ESP32 station address printed at boot. Enter its PIN. Each message accepts 1–24 printable ASCII bytes. The queue accepts at most four outgoing messages and one submission every five seconds. Sent indicates the radio driver accepted the turn. Delivered indicates an authenticated peer receipt. The Master selects the first known radio peer in this version.
+
+`POST /api/node-chat/login` accepts a JSON PIN and issues a short-lived bearer token. `GET /api/node-chat/messages?since=0` reads updates and link status. `POST /api/node-chat/messages` queues text. Five failed login attempts block requests for 60 seconds. The session expires after 30 minutes idle. For physical USB testing only, `chat_send` accepts a text field and uses the same radio queue. Compact v3 adds kind 9 for a 32-bit ID, one-byte length and 24-byte ASCII slot, and kind 10 for a 32-bit peer receipt. Both use the existing authenticated header and turn token.
+
+## Gateway retained MQTT
+
+Retained JSON topics are under `<configured-prefix>/<gateway-id>/lora/<node-id>/` and end in `status`, `link`, `config`, `airtime`, `counters`, `alarms`, or `telemetry/ina219`. Each payload uses `schema_version: 1`. Subscribe to `<configured-prefix>/<gateway-id>/lora/availability` for the Gateway Last Will. Slaves have no broker connection, so their status is inferred from the last authenticated report. Consumers should read availability alongside the per-node topics. Missing observations are null. The Gateway MQTT account needs publish ACL for this subtree. Existing command and telemetry topics continue to use their original schema.
+
+Gateway LoRa Mesh Monitor uses the existing Gateway sign-in and refreshes radio observations every five seconds. Measured packet RSSI excludes raw values outside the configured plausibility range. Link levels are 4 at −70 dBm or stronger, 3 at −90, 2 at −110, and 1 below −110. The monitoring projection caps poor delivery at level 2 when counters support that calculation.
