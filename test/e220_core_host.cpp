@@ -260,6 +260,7 @@ static void capturedV3Rssi(){
 }
 int main(){
  capturedV3Rssi();
+ static_assert(NodeChat::deliveryDeadline(60000)>5*60000,"Chat must survive boot registration and command turns");
  assert(NodeChat::validText("<>&\"",4));
  assert(!NodeChat::validText("",0)&&!NodeChat::validText("a\nb",3));
  assert(!NodeChat::validText("\xc3\xa9",2));

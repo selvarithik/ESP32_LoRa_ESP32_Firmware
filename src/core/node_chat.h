@@ -3,6 +3,9 @@
 #include <stdint.h>
 
 namespace NodeChat {
+// Allow registration, one command ACK/response and the text receipt to use
+// separate turns, even when text is queued during boot holdoff.
+constexpr uint32_t deliveryDeadline(uint32_t pollInterval){return 8U*pollInterval;}
 inline bool validText(const char* text,size_t size){
  if(!text||!size||size>24)return false;
  for(size_t i=0;i<size;++i)if(text[i]<32||text[i]>126)return false;

@@ -637,24 +637,28 @@ void NetworkService::loop() {
     now=millis(); // Packets queued above may have a newer timestamp than the loop entry.
     for(auto& entry:chatEntries)if(entry.outgoing&&
         (!strcmp(entry.state,"queued")||!strcmp(entry.state,"sent"))&&
-        now-entry.created>RadioAirtime::ReplyAssemblyMs)chatState(entry,"failed");
+        now-entry.created>NodeChat::deliveryDeadline(RadioAirtime::PollIntervalMs))chatState(entry,"failed");
     for(auto& p:pending)if(p.used) {
         if(p.inFlight)continue;
         const bool retainedReply=p.host.startsWith("RADIO:")&&(p.command||p.packet.type==PacketType::ACK||
             p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO||p.packet.payload.indexOf("\"chat_id\"")>=0||p.packet.payload=="{\"radio_config_report\":true}");
-        if(now-p.created>(retainedReply?RadioAirtime::ReplyAssemblyMs:c.message_max_age_ms)){
+        const bool chat=p.packet.payload.indexOf("\"chat_id\"")>=0;
+        const uint32_t lifetime=chat?NodeChat::deliveryDeadline(RadioAirtime::PollIntervalMs):
+            retainedReply?RadioAirtime::ReplyAssemblyMs:c.message_max_age_ms;
+        if(now-p.created>lifetime){
             p.used=false;++failed;latestState=p.command?"TIMEOUT":latestState;continue;
         }
     }
     // Keep command traffic ahead of radio maintenance. A Slave gets one
     // reply per turn, so send ACK, result and registration before telemetry.
-    for(unsigned priority=0;priority<4;++priority)for(auto& p:pending)if(p.used) {
+    for(unsigned priority=0;priority<5;++priority)for(auto& p:pending)if(p.used) {
         const bool radio=p.host.startsWith("RADIO:");
         unsigned rank=0;
         if(radio&&c.role==DeviceRole::NODE){
             if(p.packet.type==PacketType::RESPONSE)rank=1;
             else if(p.packet.type==PacketType::HELLO)rank=2;
-            else if(p.packet.type!=PacketType::ACK)rank=3;
+            else if(p.packet.type==PacketType::STATUS&&p.packet.payload.indexOf("\"chat_id\"")>=0)rank=3;
+            else if(p.packet.type!=PacketType::ACK)rank=4;
         }else if(radio&&!p.command)rank=p.packet.type==PacketType::ACK?1:2;
         if(rank!=priority)continue;
 #ifdef CONDUCTED_BENCH
