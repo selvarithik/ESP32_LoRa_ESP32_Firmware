@@ -30,7 +30,7 @@ public:
  template<class Signal>
  bool expire(uint32_t now,Signal signal) {
   if(now-lastByteAt<=1000)return false;
-  if(possibleStart&&length==1&&reportRssi)signal(RadioRssi::dbm(4));
+  if(possibleStart&&length==1&&reportRssi)signal(uint8_t(4));
   const bool rejected=skipRssi||overflow||length>size_t(possibleStart);
   length=0;
   skipRssi=reportRssi=possibleStart=overflow=false;
@@ -43,7 +43,7 @@ public:
    skipRssi=false;
    // RSSI 0x04 can also be the start of the next frame if RSSI was lost.
    if(byte==4){encoded[length++]=byte;possibleStart=true;return true;}
-   if(reportRssi&&RadioRssi::available(byte))signal(RadioRssi::dbm(byte));
+   if(reportRssi)signal(byte);
    reportRssi=false;
    return true;
   }
@@ -53,7 +53,7 @@ public:
    if(possibleStart){
     if(startsFrame(encoded,length))rejected=true;
     else{
-     if(reportRssi)signal(RadioRssi::dbm(4));
+     if(reportRssi)signal(uint8_t(4));
      start=1;
     }
    }

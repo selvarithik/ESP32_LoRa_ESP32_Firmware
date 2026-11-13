@@ -121,7 +121,7 @@ static void capturedRssiFraming() {
    ++frames;
    return true;
   };
-  auto signal=[&](int value){signals.push_back(value);};
+  auto signal=[&](uint8_t value){signals.push_back(RadioRssi::dbm(value));};
   auto feed=[&](unsigned index,size_t first,size_t end,uint32_t now){
    for(size_t i=first;i<end;++i)if(!stream.add(wire[index][i],now,true,frame,signal))++rejects;
   };
@@ -150,7 +150,8 @@ static void capturedRssiFraming() {
   }
   assert(frames==(scenario>=3?2U:1U));
   assert(rejects==(scenario>=4&&scenario<=6?1U:0U));
-  if(scenario==4||scenario==7)assert(signals.size()==1&&signals[0]==-32);
+  if(scenario==4)assert(signals.size()==1&&signals[0]==-32);
+  else if(scenario==7)assert(signals.size()==2&&signals[0]==-256&&signals[1]==-32);
   else{
    assert(signals.size()==frames&&signals[0]==-33);
    if(frames==2)assert(signals[1]==-32);
@@ -228,7 +229,26 @@ static void compactFrames(){
   raw[2]=3;raw[5]=1;assert(!CompactRadio::unpack(raw,size,decoded));
  }
 }
+static void capturedV3Rssi(){
+ const uint8_t capture[]={0x04,0xe2,0x7a,0x03,0x02,0x04,0x23,0x84,0x1f,0xe8,0x2a,0x2f,0x84,0x78,0x21,0x84,0x7d,0x77,0x10,0xa7,0xc9,0x24,0x13,0xc4,0xdd,0x6c,0x44,0x47,0x0c,0x01,0xfb,0x89,0x20,0x6c,0xa4,0x2f,0xe1,0x39,0x34,0x0c,0x31,0x05,0x30,0xfd,0x01,0x7f,0x00,0xff};
+ for(size_t split=1;split<sizeof(capture);++split){
+  E220Core::ReceiveStream stream;
+  unsigned frames=0, samples=0;
+  auto frame=[&](const uint8_t* bytes,size_t n){
+   uint8_t raw[64];const auto len=E220Core::cobsDecode(bytes,n,raw,sizeof(raw));
+   CompactRadio::Frame ack;
+   assert(len==45&&CompactRadio::unpack(raw,len-E220Core::Tag,ack)&&ack.kind==CompactRadio::Ack);
+   ++frames;return true;
+  };
+  auto rssi=[&](uint8_t raw){assert(raw==0xff&&!RadioRssi::available(raw));++samples;};
+  for(size_t i=0;i<sizeof(capture);++i)assert(stream.add(capture[i],i<split?10:20,true,frame,rssi));
+  assert(frames==1&&samples==1);
+ }
+ assert(!RadioRssi::available(114)&&RadioRssi::available(115)&&RadioRssi::available(245)&&!RadioRssi::available(246));
+ assert(!RadioRssi::available(0)&&!RadioRssi::available(0xfe)&&RadioRssi::dbm(0xdf)==-33);
+}
 int main(){
+ capturedV3Rssi();
  compactFrames();
  assert(!E220Core::freshReception(true,false,100,0,1000));
  assert(!E220Core::freshReception(false,true,100,90,1000));

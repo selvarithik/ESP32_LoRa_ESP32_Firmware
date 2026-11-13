@@ -91,11 +91,12 @@ function renderRadioReport(target, radio, routes) {
             : radio.state === "DISABLED" ? "Radio disabled"
             : radio.state === "ERROR" ? "Radio fault" : "Radio status unavailable";
         const o = radio.observed;
-        const rssi = Number.isFinite(radio.rssi_dbm) ? `${radio.rssi_dbm} dBm${radio.rf_receive_state === "RECEIVING" ? "" : " (last sample)"}`
-            : o?.rssi_enabled === false ? "RSSI is disabled in the module" : "Waiting for a valid packet with RSSI";
+        const rssi = radio.rssi_valid === true && Number.isFinite(radio.rssi_dbm) ? `${radio.rssi_dbm} dBm${radio.rf_receive_state === "RECEIVING" ? "" : " (last sample)"}`
+            : "n/a";
+        const rawRssi = Number.isInteger(radio.rssi_raw) ? `0x${radio.rssi_raw.toString(16).toUpperCase().padStart(2, "0")}` : null;
         const details = [
             ["Connection", status], ["Module readback", radio.public_settings_read ? "Registers read successfully" : "No valid register readback"],
-            ["Received signal (RSSI)", rssi], ["Last radio peer", radio.last_rf_peer],
+            ["Received signal (RSSI)", rssi], ["Raw RSSI byte", rawRssi], ["Last radio peer", radio.last_rf_peer],
             ["Last received", Number.isFinite(radio.last_rf_age_ms) ? `${Math.floor(radio.last_rf_age_ms / 1000)} s before this report` : null],
             ["AUX pin", radio.pin_levels?.aux_high == null ? null : radio.pin_levels.aux_high ? "High" : "Low"],
             ["Channel", o && Number.isInteger(o.channel) ? `${o.channel} · ${(850.125 + o.channel).toFixed(3)} MHz` : null],

@@ -23,7 +23,7 @@ enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Writing,BenchKey,PostWri
 State state=State::Off;const char* error="DISABLED";bool initialized=false,probeOnly=false,restoreHigh0=false,restoreHigh1=false;
 bool probePinsConfigured=false,settingsQuerySent=false;const char* probePhase="NOT_STARTED";
 uint32_t since=0,auxSince=0,nextTx=0,txStarted=0;bool auxHigh=false;
-E220Core::Settings observed;bool observedValid=false;uint8_t desiredBytes[6]{};bool wrote=false;unsigned registerWrites=0;int lastRssi=0;bool hasRssi=false,txAwake=false;uint32_t lastRfRxAt=0;uint32_t txAwakeAt=0;
+E220Core::Settings observed;bool observedValid=false;uint8_t desiredBytes[6]{};bool wrote=false;unsigned registerWrites=0;uint8_t lastRssi=0;bool hasRssi=false,txAwake=false;uint32_t lastRfRxAt=0;uint32_t txAwakeAt=0;
 uint8_t settingsBytes[9]{};unsigned settingsLength=0;E220Core::SettingsReader settingsReader;unsigned settingsAttempts=0;
 uint32_t writeAt=0,writeEdge=0;
 bool postWrite=false;
@@ -369,7 +369,7 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
  }
  if(txAwake&&config.lora_work_mode=="WOR_RX"&&idle()&&now-txAwakeAt>3000&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,HIGH);txAwake=false;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
  assemblies.expire(now,isMaster()?RadioAirtime::ReplyAssemblyMs:E220Core::AssemblyLifetime);
- const auto signal=[](int rssi){lastRssi=rssi;hasRssi=true;};
+ const auto signal=[](uint8_t rssi){lastRssi=rssi;hasRssi=true;};
  if(rxStream.expire(now,signal))++rejected;
  for(unsigned budget=0;budget<256&&radioUart().available();++budget){
   const uint8_t byte=radioUart().read();
@@ -524,6 +524,13 @@ bool LoRaTransport::hasFreshReception()const{
 bool LoRaTransport::idle()const{return !txLength&&!rxReady&&!hasResult&&!masterWaiting&&RadioTurn::due(millis(),nextTx);}
 String LoRaTransport::sender()const{return lastSender;}
 bool LoRaTransport::delivery(String& id,bool& ok){if(!hasResult)return false;id=resultId;ok=resultOk;hasResult=false;return true;}
+void LoRaTransport::appendSignalStatus(JsonObject status)const{
+ const bool sample=hasRssi&&observed.rssi&&rxCount;
+ const bool valid=sample&&RadioRssi::available(lastRssi);
+ if(sample)status["rssi_raw"]=lastRssi;else status["rssi_raw"]=nullptr;
+ if(valid)status["rssi_dbm"]=RadioRssi::dbm(lastRssi);else status["rssi_dbm"]=nullptr;
+ status["rssi_valid"]=valid;
+}
 String LoRaTransport::statusJson()const{JsonDocument d;d["state"]=state==State::Sleeping?"SLEEPING":initialized?"READY_LINK_UNVERIFIED":state==State::Off?"DISABLED":state==State::Fault?"ERROR":"INSPECTING";d["error"]=error;d["module"]="E220-900T22D";const bool fresh=hasFreshReception();d["hardware_link_verified"]=fresh;
 const uint32_t rxAge=millis()-lastRfRxAt;
 d["rf_receive_state"]=!initialized||state!=State::Ready?"INACTIVE":!rxCount?"WAITING_FOR_PEER":fresh?"RECEIVING":"STALE";
@@ -535,4 +542,4 @@ auto budget=d["airtime_budget"].to<JsonObject>();
 budget["state"]=budgetBlocked?"BUDGET_EXHAUSTED":bootQuiet?"BOOT_QUIET":"AVAILABLE";
 budget["used_us"]=airtime.used(millis());budget["limit_us"]=RadioAirtime::LimitUs;
 budget["refusals"]=budgetDenials;budget["poll_interval_ms"]=RadioAirtime::PollIntervalMs;budget["model_verified"]=false;
-d["tx_pending"]=txLength>0;d["tx_uart_fragments"]=txCount;d["rx_messages"]=rxCount;d["rejected"]=rejected;d["auth_failures"]=authFailures;d["protocol_mismatch"]=protocolMismatches;d["timeouts"]=timeouts;d["reassembly_expired"]=assemblies.expired;d["reassembly_duplicates"]=assemblies.duplicates;d["completed_uart_transfers"]=completed;if(hasRssi&&observed.rssi&&rxCount)d["rssi_dbm"]=lastRssi;else d["rssi_dbm"]=nullptr;d["snr_db"]=nullptr;if(observedValid){auto s=d["observed"].to<JsonObject>();s["address"]=observed.address;s["baud"]=observed.baud;s["channel"]=observed.channel;s["air_rate_code"]=observed.airRate;s["power_dbm"]=observed.power;s["subpacket_bytes"]=observed.packet;s["wor_cycle_ms"]=observed.worMs;s["fixed_mode"]=observed.fixed;s["rssi_enabled"]=observed.rssi;s["lbt"]=observed.lbt;}String out;serializeJson(d,out);return out;}
+d["tx_pending"]=txLength>0;d["tx_uart_fragments"]=txCount;d["rx_messages"]=rxCount;d["rejected"]=rejected;d["auth_failures"]=authFailures;d["protocol_mismatch"]=protocolMismatches;d["timeouts"]=timeouts;d["reassembly_expired"]=assemblies.expired;d["reassembly_duplicates"]=assemblies.duplicates;d["completed_uart_transfers"]=completed;appendSignalStatus(d.as<JsonObject>());d["snr_db"]=nullptr;if(observedValid){auto s=d["observed"].to<JsonObject>();s["address"]=observed.address;s["baud"]=observed.baud;s["channel"]=observed.channel;s["air_rate_code"]=observed.airRate;s["power_dbm"]=observed.power;s["subpacket_bytes"]=observed.packet;s["wor_cycle_ms"]=observed.worMs;s["fixed_mode"]=observed.fixed;s["rssi_enabled"]=observed.rssi;s["lbt"]=observed.lbt;}String out;serializeJson(d,out);return out;}

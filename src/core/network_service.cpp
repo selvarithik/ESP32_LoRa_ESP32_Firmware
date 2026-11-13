@@ -99,6 +99,7 @@ String bodyStatus() {
 #endif
     if(c.role==DeviceRole::MASTER&&loraTransport.isInitialized()){
         d["radio_poll_interval_ms"]=RadioAirtime::PollIntervalMs;
+        loraTransport.appendSignalStatus(d["radio_signal"].to<JsonObject>());
         auto children=d["radio_poll_children"].to<JsonArray>();
         for(const auto& p:peers)if(!p.id.isEmpty()&&p.host=="RADIO:"+p.id)children.add(p.id);
     }

@@ -1,5 +1,6 @@
 #pragma once
 #include <Arduino.h>
+#include <ArduinoJson.h>
 #include "../config/config_schema.h"
 #include "../protocol/protocol.h"
 class LoRaTransport {
@@ -19,6 +20,7 @@ public:
  bool hasFreshReception() const;
  bool idle() const;
  String sender() const;
+ void appendSignalStatus(JsonObject status) const;
  String statusJson() const;
  bool requestProbe(bool readOnly=true,uint8_t diagnosticPort=2);
  String isolatedUartLoopback();
