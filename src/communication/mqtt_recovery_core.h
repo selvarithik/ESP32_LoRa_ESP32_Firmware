@@ -1,7 +1,8 @@
 #pragma once
 #include <stdint.h>
 namespace MqttRecoveryCore {
-inline bool allocationFailure(int error){return error==-0x7f00;}
+// ESP-TLS may report the negated Mbed TLS return code.
+inline bool allocationFailure(int error){return error==0x7f00||error==-0x7f00;}
 // The network worker owns stop/destroy; callbacks only report state.
 struct LinkWatch {
  bool wasWifi=false,seenWifi=false,waiting=false;uint32_t since=0;
