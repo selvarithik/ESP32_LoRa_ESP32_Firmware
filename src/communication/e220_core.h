@@ -6,6 +6,9 @@
 namespace E220Core {
 constexpr size_t MaxMessage=3072,Header=30,Tag=16,MaxFrame=200;
 constexpr uint32_t AssemblyLifetime=120000;
+inline bool freshReception(bool ready, bool received, uint32_t now, uint32_t lastReceived, uint32_t timeout) {
+ return ready && received && uint32_t(now-lastReceived)<=timeout;
+}
 inline void put16(uint8_t* p,uint16_t v){p[0]=v;p[1]=v>>8;}
 inline uint16_t get16(const uint8_t* p){return uint16_t(p[0])|uint16_t(p[1])<<8;}
 inline void put32(uint8_t* p,uint32_t v){for(unsigned i=0;i<4;++i)p[i]=v>>(i*8);}

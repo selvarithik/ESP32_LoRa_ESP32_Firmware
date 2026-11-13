@@ -108,12 +108,15 @@ String LoRaTransport::isolatedUartLoopback(){
 bool LoRaTransport::receive(Message& m){if(!rxReady)return false;m=received;rxReady=false;return true;}
 bool LoRaTransport::auxReady()const{return state!=State::Off&&state!=State::Fault&&digitalRead(config.lora_aux_pin)==HIGH;}
 bool LoRaTransport::isInitialized()const{return initialized;}
+bool LoRaTransport::hasFreshReception()const{
+ return E220Core::freshReception(initialized&&state==State::Ready,rxCount!=0,millis(),lastRfRxAt,config.route_timeout_seconds*1000UL);
+}
 bool LoRaTransport::idle()const{return !txLength&&!rxReady&&!hasResult&&(int32_t)(millis()-nextTx)>=0;}
 String LoRaTransport::sender()const{return lastSender;}
 bool LoRaTransport::delivery(String& id,bool& ok){if(!hasResult)return false;id=resultId;ok=resultOk;hasResult=false;return true;}
-String LoRaTransport::statusJson()const{JsonDocument d;d["state"]=state==State::Sleeping?"SLEEPING":initialized?"READY_LINK_UNVERIFIED":state==State::Off?"DISABLED":state==State::Fault?"ERROR":"INSPECTING";d["error"]=error;d["module"]="E220-900T22D";d["hardware_link_verified"]=false;
+String LoRaTransport::statusJson()const{JsonDocument d;d["state"]=state==State::Sleeping?"SLEEPING":initialized?"READY_LINK_UNVERIFIED":state==State::Off?"DISABLED":state==State::Fault?"ERROR":"INSPECTING";d["error"]=error;d["module"]="E220-900T22D";const bool fresh=hasFreshReception();d["hardware_link_verified"]=fresh;
 const uint32_t rxAge=millis()-lastRfRxAt;
-d["rf_receive_state"]=!initialized||state!=State::Ready?"INACTIVE":!rxCount?"WAITING_FOR_PEER":rxAge>config.route_timeout_seconds*1000UL?"STALE":"RECEIVING";
+d["rf_receive_state"]=!initialized||state!=State::Ready?"INACTIVE":!rxCount?"WAITING_FOR_PEER":fresh?"RECEIVING":"STALE";
 if(rxCount){d["last_rf_peer"]=lastSender;d["last_rf_age_ms"]=rxAge;}
 d["public_settings_read"]=observedValid;d["register_writes"]=registerWrites;d["work_mode"]=config.lora_work_mode;d["sleeping"]=state==State::Sleeping;d["wor_cycle_ms"]=config.lora_wor_cycle_ms;d["aux_ready"]=auxReady();d["probe_phase"]=probePhase;d["settings_query_sent"]=settingsQuerySent;d["settings_response_bytes"]=settingsReader.total;d["settings_read_attempts"]=settingsAttempts;d["uart_peripheral"]=useDiagnosticUart?1:2;d["uart_actual_baud"]=probePinsConfigured?radioUart().baudRate():0;String publicReply;for(unsigned i=0;i<settingsLength&&i<9;++i){char byte[3];snprintf(byte,sizeof(byte),"%02X",settingsBytes[i]);publicReply+=byte;}d["settings_response_hex"]=publicReply;auto pins=d["pin_levels"].to<JsonObject>();pins["initialized_by_probe"]=probePinsConfigured;pins["rx_gpio"]=config.lora_rx_pin;pins["tx_gpio"]=config.lora_tx_pin;pins["aux_gpio"]=config.lora_aux_pin;pins["m0_gpio"]=config.lora_m0_pin;pins["m1_gpio"]=config.lora_m1_pin;
 // Direct pad reads, independent of driver Fault/Off readiness. No pin mode/output changes here.

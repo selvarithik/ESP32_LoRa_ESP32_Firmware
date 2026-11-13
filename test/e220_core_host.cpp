@@ -49,6 +49,12 @@ static void simulatedTwoBoardBench() {
 }
 
 int main(){
+ assert(!E220Core::freshReception(true,false,100,0,1000));
+ assert(!E220Core::freshReception(false,true,100,90,1000));
+ assert(E220Core::freshReception(true,true,100,90,10));
+ assert(!E220Core::freshReception(true,true,101,90,10));
+ assert(E220Core::freshReception(true,true,5,UINT32_MAX-4,10));
+
  assert(HardwareProfile::radioUartPins(true,16,17));assert(HardwareProfile::radioUartPins(false,16,17));
  assert(HardwareProfile::radioUartPins(true,32,33));assert(!HardwareProfile::radioUartPins(false,32,33));
  assert(!HardwareProfile::radioUartPins(true,33,32));assert(!HardwareProfile::radioUartPins(true,3,1));

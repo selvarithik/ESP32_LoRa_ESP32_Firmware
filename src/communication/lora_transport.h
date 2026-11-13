@@ -11,6 +11,7 @@ public:
  void loop();
  bool auxReady() const;
  bool isInitialized() const;
+ bool hasFreshReception() const;
  bool idle() const;
  String sender() const;
  String statusJson() const;
