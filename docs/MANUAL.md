@@ -65,3 +65,9 @@ Use a trusted LAN. The ESP32 chat page uses plain HTTP. Provision a different PI
 Retained JSON topics are under `<configured-prefix>/<gateway-id>/lora/<node-id>/` and end in `status`, `link`, `config`, `airtime`, `counters`, `alarms`, or `telemetry/ina219`. Each payload uses `schema_version: 1`. Subscribe to `<configured-prefix>/<gateway-id>/lora/availability` for the Gateway Last Will. Slaves have no broker connection, so their status is inferred from the last authenticated report. Consumers should read availability alongside the per-node topics. Missing observations are null. The Gateway MQTT account needs publish ACL for this subtree. Existing command and telemetry topics continue to use their original schema.
 
 Gateway LoRa Mesh Monitor uses the existing Gateway sign-in and refreshes radio observations every five seconds. Measured packet RSSI excludes raw values outside the configured plausibility range. Link levels are 4 at −70 dBm or stronger, 3 at −90, 2 at −110, and 1 below −110. The monitoring projection caps poor delivery at level 2 when counters support that calculation.
+
+## November 14, 2026 RSSI isolation (IST)
+
+At 00:57:41 the standalone COM10 receiver captured one authenticated-format v3 idle frame from the bench Slave. It received 41 UART bytes, ending in `40 0D 13 00 DF`. The delimiter was `00` and the receiver appended `DF` (−33 dBm). The public register readback was `C1 00 06 00 00 62 03 10 83`; REG3 bit 7 was set. The Slave probe used one charged 40-byte transmission with 2.036 s modeled airtime. The capture proves the receive-only module path can report RSSI. A difference in the production TX-to-RX path is still under investigation. Master-side RSSI unverified.
+
+The bench-only USB operation `bench_rssi_probe` permits one authenticated-format idle fragment from an otherwise silent Slave after its holdoff. It uses the normal airtime ledger and the normal transmit gap. The standalone receiving board does not transmit.
