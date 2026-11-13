@@ -47,3 +47,5 @@ is part of build verification. See docs/SHARED_FIRMWARE_REPORT.md and
 ## Conducted E220 release
 
 See [the operating manual](docs/MANUAL.md) for wiring, configuration readback, protocol, airtime assumptions, Gateway diagnostics and restoring production. See [the reference review](docs/REFERENCE_REVIEW.md) for upstream license and implementation notes.
+
+**Known limitation: Master-side RSSI unverified.** The captured v3 ACK, response and INA219 frames each end with delimiter 00 followed by a raw RSSI byte of 00. The parser stores the second byte and reports n/a. Earlier FF and FE trailers were also visible in raw UART captures. The module-level cause remains unconfirmed.

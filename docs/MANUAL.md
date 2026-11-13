@@ -50,3 +50,5 @@ One Gateway PING, `CMD-23F28DF0E544`, was dispatched at 00:16:48.903720 after th
 At 00:20:00 the Master had sent 6 fragments totaling 18.768 s modeled airtime. The Slave had sent 5 fragments totaling 11.096 s and last measured the Master at −34 dBm. Both nodes recorded zero rejects, auth failures and budget refusals at that checkpoint.
 
 The firmware and Gateway source are published as a conducted release candidate. Authenticated node chat, full per-node retained MQTT status and the complete live monitoring view still require acceptance. Real airtime, RF bandwidth, key persistence, regulatory approval and over-the-air operation are outside this evidence.
+
+**Known limitation: Master-side RSSI unverified.** The captured v3 ACK, response and INA219 frames each end with delimiter 00 followed by a raw RSSI byte of 00. The parser stores the second byte and reports n/a. Earlier FF and FE trailers were also visible in raw UART captures. The module-level cause remains unconfirmed.
