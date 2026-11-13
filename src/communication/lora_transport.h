@@ -6,6 +6,7 @@ class LoRaTransport {
 public:
  bool begin(const DeviceConfig& config);
  bool send(const Message& message);
+ bool canReply() const;
  bool available();
  bool receive(Message& message);
  void loop();

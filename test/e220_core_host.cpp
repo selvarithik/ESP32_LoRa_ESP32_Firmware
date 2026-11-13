@@ -5,6 +5,35 @@
 #include <vector>
 #include <algorithm>
 #include <random>
+#include "../src/communication/radio_turn.h"
+
+static void masterPolledTurns(){
+ const uint8_t master[6]={1,2,3,4,5,6},slave[6]={6,5,4,3,2,1};
+ RadioTurn::Exchange grant,wait;
+ assert(!grant.canClaim(master,100)&&!grant.canWrite(100,0));
+ const uint32_t now=UINT32_MAX-50;
+ wait.open(slave,7,now,now+RadioTurn::ReplyMs);
+ grant.open(master,7,now+RadioTurn::TurnaroundMs,now+RadioTurn::ReplyMs-RadioTurn::ReplyGuardMs);
+ assert(wait.busy()&&!wait.matches(master,7,now)&&!wait.matches(slave,8,now));
+ assert(!grant.canClaim(master,now)&&!grant.canClaim(slave,now+100));
+ assert(grant.canClaim(master,now+100)&&grant.claim()==7);
+ assert(!grant.canClaim(master,now+101)&&grant.canWrite(now+101,100));
+ const uint32_t cutoff=now+RadioTurn::ReplyMs-RadioTurn::ReplyGuardMs;
+ assert(!grant.canWrite(cutoff-50,50)&&grant.expired(cutoff));
+ assert(wait.matches(slave,7,cutoff)&&!wait.expired(cutoff));
+ wait.replied();
+ assert(!wait.matches(slave,7,cutoff));
+ wait.clear();
+ assert(!wait.busy());
+ const uint32_t timeout=now+RadioTurn::ReplyMs;
+ wait.open(slave,8,now,timeout);
+ assert(wait.expired(timeout)&&!wait.matches(slave,8,timeout));
+ assert(RadioTurn::retryAt(timeout,0)==timeout+250);
+ assert(RadioTurn::retryAt(timeout,750)==timeout+1000);
+ assert(RadioTurn::mayAttempt(0,5)&&RadioTurn::mayAttempt(1,5)&&RadioTurn::mayAttempt(2,5));
+ assert(!RadioTurn::mayAttempt(3,5)&&!RadioTurn::mayAttempt(1,0));
+ puts("PASS master-polled radio turns: addressed token, single claim, fragment cutoff, timeout and jitter across clock rollover");
+}
 
 static void capturedRssiFraming() {
  // Verbatim payload and RSSI bytes from the two conducted bench captures.
@@ -167,6 +196,7 @@ int main(){
  assert(E220Core::forwardAllowed(3,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(1,1,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,4,4,"RADIO:next","RADIO:previous"));assert(!E220Core::forwardAllowed(3,1,4,"RADIO:same","RADIO:same"));
  assert(routes.observe("target","direct",1,0));assert(routes.observe("target","relay",2,1));assert(!strcmp(routes.find("target",2,60000)->nextHop,"direct"));
  capturedRssiFraming();
+ masterPolledTurns();
  simulatedTwoBoardBench();
  puts("PASS production E220 settings/stream resync, COBS 500 vectors, all subpacket sizes, reassembly, duplicates, bounds, expiry, routes and role safety");
 }

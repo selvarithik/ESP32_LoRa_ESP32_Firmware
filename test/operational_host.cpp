@@ -27,6 +27,7 @@ constexpr unsigned MAX_PAYLOAD_BYTES=2048,MAX_FRAME_BYTES=4096;unsigned packetSe
 Message emitted;bool trackOk=true;bool track(const Message&m,const String&,bool=false){emitted=m;return trackOk;}String bodyStatus(){return "{\"device_id\":\"MASTER\"}";}
 namespace CanonicalMqtt{bool up=true,enabled=true,requested=false,reconnect=false,publishOk=true;unsigned recycles=0;String state="connected",subscriptions="READY";String status(){JsonDocument d;d["runtime_enabled"]=enabled;d["state"]=state;d["subscription_state"]=subscriptions;d["tls_client_recycles"]=recycles;String out;serializeJson(d,out);return out;}bool connected(){return up;}bool publish(const Message&){return publishOk;}void requestEnabled(bool e){enabled=e;requested=e;}void requestReconnect(){reconnect=true;}}
 struct Peer{String id,host;uint32_t seen=0;};Peer peers[12];
+void scheduleRadioDiscovery(){}
 struct Cached{String source,id,request,response,responseId;uint32_t seen=0;bool executed=false,success=false;};Cached cache[32];unsigned failed=10,duplicates=3;String latestCommand,latestState;
 #include "../src/core/operational_runtime.inc"
 JsonDocument args,output;String result;bool deferred=false;
