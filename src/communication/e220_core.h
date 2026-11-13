@@ -24,7 +24,7 @@ class ReceiveStream {
  bool skipRssi=false, reportRssi=false, possibleStart=false, overflow=false;
  // The reserved zero in the RV2 header terminates the first COBS block.
  static bool startsFrame(const uint8_t* bytes,size_t size) {
-  return size>=4&&bytes[0]==4&&bytes[1]==0xe2&&bytes[2]==0x7a&&bytes[3]==2;
+  return size>=4&&bytes[0]==4&&bytes[1]==0xe2&&bytes[2]==0x7a&&bytes[3]!=0;
  }
 public:
  template<class Signal>

@@ -8,6 +8,8 @@ public:
  bool send(const Message& message);
  bool canReply() const;
  bool canPoll() const;
+ bool lastDeliveryCompact(const String& id) const;
+ bool supportsCompact(const String& peer) const;
  uint32_t airtimeRefusals() const;
  bool available();
  bool receive(Message& message);

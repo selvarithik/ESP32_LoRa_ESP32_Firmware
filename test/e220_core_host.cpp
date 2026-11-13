@@ -1,3 +1,4 @@
+#include "../src/communication/compact_radio.h"
 #include "../src/communication/e220_core.h"
 #include "../src/config/hardware_profile.h"
 #include <assert.h>
@@ -201,7 +202,30 @@ static void simulatedTwoBoardBench() {
  puts("PASS seeded two-board simulation: 100 transfers, both directions, loss, expiry, duplicates and retry");
 }
 
+static void compactFrames(){
+ const uint8_t lengths[]={2,1,10,7,9,10,0};
+ for(uint8_t kind=1;kind<=7;++kind){
+  CompactRadio::Frame f,decoded;
+  f.kind=kind;f.source[0]=1;f.destination[0]=2;f.token=0x10203040;
+  uint8_t raw[64]{},encoded[66]{};
+  auto size=CompactRadio::pack(f,raw);
+  assert(size==CompactRadio::Header+lengths[kind-1]);
+  assert(CompactRadio::unpack(raw,size,decoded));
+  assert(CompactRadio::addressed(decoded,f.source,f.destination));
+  assert(!CompactRadio::addressed(decoded,f.destination,f.source));
+  RadioTurn::Exchange turn;turn.open(f.source,f.token,10,100);
+  assert(turn.matches(decoded.source,decoded.token,20));
+  assert(!turn.matches(decoded.source,decoded.token+1,20));
+  auto bytes=E220Core::cobsEncode(raw,size+E220Core::Tag,encoded,sizeof(encoded));
+  assert(bytes==size+E220Core::Tag+2&&bytes<=64);
+  RadioAirtime::Budget budget;assert(budget.debit(20,bytes,0));
+  assert(budget.used(20)==RadioAirtime::fragmentUs(bytes));
+  raw[2]=2;assert(!CompactRadio::unpack(raw,size,decoded));
+  raw[2]=3;raw[5]=1;assert(!CompactRadio::unpack(raw,size,decoded));
+ }
+}
 int main(){
+ compactFrames();
  assert(!E220Core::freshReception(true,false,100,0,1000));
  assert(!E220Core::freshReception(false,true,100,90,1000));
  assert(E220Core::freshReception(true,true,100,90,10));

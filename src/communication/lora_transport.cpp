@@ -1,5 +1,8 @@
 #include "lora_transport.h"
 #include "e220_core.h"
+#include "compact_radio.h"
+#include <cmath>
+#include <time.h>
 #include "e220_readback.h"
 #include "radio_turn.h"
 #include "radio_airtime.h"
@@ -32,6 +35,11 @@ uint8_t encoded[202]{},raw[200]{};
 E220Core::ReceiveStream rxStream;
 uint8_t txData[E220Core::MaxMessage]{};size_t txLength=0;uint8_t txPart=0;String txId,lastSender,resultId;bool resultOk=false,hasResult=false,rxReady=false;
 Message received;
+CompactRadio::Frame compactTx;
+bool useCompactTx=false,resultCompact=false,compactReplyAllowed=false;
+uint8_t compactPeers[12][6]{};
+uint8_t compactPeerCount=0;
+uint32_t protocolMismatches=0;
 RadioTurn::Exchange radioTurn;
 RadioAirtime::Budget airtime;
 uint32_t bootTxAt=0,nextPollAt=0,budgetDenials=0,turnToken=0;
@@ -70,8 +78,150 @@ bool validPoll(const Message& m,const String& sender){
  return (m.source==sender||m.source=="GATEWAY")&&body["command"].is<const char*>()&&body["arguments"].is<JsonObject>()&&
   body["command_id"].as<String>()==m.messageId;
 }
-void finishSend(bool ok){txLength=0;replyPaused=false;hasResult=true;resultId=txId;resultOk=ok;}
-void receiveFrame(const uint8_t* encoded,size_t length){size_t n=E220Core::cobsDecode(encoded,length,raw,sizeof(raw));if(n<=E220Core::Header+E220Core::Tag){++rejected;return;}uint8_t signature[32];size_t body=n-E220Core::Tag;if(!tag(raw,body,signature)){++authFailures;return;}uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[body+i];if(diff){++authFailures;return;}E220Core::Fragment f;if(!E220Core::parse(raw,body,f)){++rejected;return;}
+bool compactPeer(const uint8_t* peer){
+ for(unsigned i=0;i<compactPeerCount;++i)if(!memcmp(compactPeers[i],peer,6))return true;
+ return false;
+}
+void rememberCompact(const uint8_t* peer){
+ if(!compactPeer(peer)&&compactPeerCount<12)memcpy(compactPeers[compactPeerCount++],peer,6);
+}
+void forgetCompact(const uint8_t* peer){
+ for(unsigned i=0;i<compactPeerCount;++i){
+  if(memcmp(compactPeers[i],peer,6))continue;
+  --compactPeerCount;
+  if(i!=compactPeerCount)memcpy(compactPeers[i],compactPeers[compactPeerCount],6);
+  return;
+ }
+}
+bool commandBytes(const String& id,uint8_t* out){
+ if(id.length()!=16||!id.startsWith("CMD-"))return false;
+ for(unsigned i=0;i<6;++i){
+  char pair[3]={id[4+i*2],id[5+i*2],0};
+  for(unsigned j=0;j<2;++j)if(!isdigit(pair[j])&&(pair[j]<'A'||pair[j]>'F'))return false;
+  out[i]=strtoul(pair,nullptr,16);
+ }
+ return true;
+}
+String commandId(const uint8_t* bytes){
+ char id[17];snprintf(id,sizeof(id),"CMD-%02X%02X%02X%02X%02X%02X",bytes[0],bytes[1],bytes[2],bytes[3],bytes[4],bytes[5]);return id;
+}
+uint8_t compactKind(const Message& m,CompactRadio::Frame& f){
+ JsonDocument d;if(deserializeJson(d,m.payload))return 0;
+ using namespace CompactRadio;
+ if(isMaster()){
+  if(m.type==PacketType::HELLO){
+   f.data[0]=d["register"]==true;
+   return Poll;
+  }
+  if(m.type==PacketType::COMMAND&&m.source=="GATEWAY"&&d["command"]=="PING"&&
+     d["arguments"].is<JsonObject>()&&!d["arguments"].size()&&commandBytes(m.messageId,f.data)){
+   E220Core::put32(f.data+6,m.timestamp);return Ping;
+  }
+  return 0;
+ }
+ if(m.type==PacketType::HELLO){E220Core::put16(f.data,1);return Register;}
+ if(m.type==PacketType::STATUS&&d["radio_idle"]==true)return Idle;
+ if(m.type==PacketType::ACK&&m.destination=="GATEWAY"&&commandBytes(m.correlationId,f.data)){
+  String status=d["status"]|"";
+  if(status=="ACCEPTED")f.data[6]=1;
+  else if(status=="DUPLICATE")f.data[6]=2;
+  else if(status=="BUSY")f.data[6]=3;
+  else return 0;
+  return Ack;
+ }
+ if(m.type==PacketType::RESPONSE&&m.destination=="GATEWAY"&&d["status"]=="SUCCESS"&&
+    d["data"]["ok"]==true&&d["data"]["message"].isNull()&&d["data"]["transport"].as<String>().startsWith("RADIO:")&&
+    commandBytes(m.correlationId,f.data)){
+  f.data[6]=1;E220Core::put16(f.data+7,min(d["execution_duration_ms"]|0U,65535U));return Result;
+ }
+ if(m.type==PacketType::TELEMETRY&&d["sensor_type"]=="INA219"&&d["valid"]==true){
+  const float bus=d["parameters"]["bus_voltage"]|0.0f,shunt=d["parameters"]["shunt_voltage"]|0.0f;
+  if(!isfinite(bus)||!isfinite(shunt)||bus<0||bus>26||fabsf(shunt)>=320)return 0;
+  E220Core::put32(f.data,m.timestamp);
+  E220Core::put16(f.data+4,lroundf(bus/0.004f));E220Core::put16(f.data+6,uint16_t(lroundf(shunt/0.01f)));
+  E220Core::put16(f.data+8,d["shunt_milliohms"]|0U);return Ina219;
+ }
+ return 0;
+}
+bool compactMessage(const CompactRadio::Frame& f,Message& m){
+ using namespace CompactRadio;
+ const String sender=identity(f.source);
+ m.source=m.origin=sender;m.destination=m.nextHop=config.device_id;
+ m.messageId=generateMessageId();m.radioHopCount=1;m.radioMaxHops=5;m.radioWireVersion=Version;
+ JsonDocument d;
+ if(!isMaster()){
+  if(f.kind==Poll){
+   m.type=PacketType::HELLO;d["device_id"]=sender;d["role"]="MASTER";d["register"]=f.data[0]!=0;
+  }else if(f.kind==Ping){
+   m.type=PacketType::COMMAND;m.source=m.origin="GATEWAY";
+   m.messageId=m.correlationId=commandId(f.data);m.timestamp=E220Core::get32(f.data+6);
+   d["command_id"]=m.messageId;d["command"]="PING";d["arguments"].to<JsonObject>();
+  }else return false;
+ }else if(f.kind==Register){
+  m.type=PacketType::HELLO;
+  d["device_id"]=sender;d["role"]="NODE";d["master_id"]=config.device_id;
+  d["heartbeat_seconds"]=30;d["radio_wire_version"]=Version;d["capabilities"]=E220Core::get16(f.data);
+ }else if(f.kind==Ack||f.kind==Result){
+  if(!f.data[6]||(f.kind==Ack?f.data[6]>3:f.data[6]!=1))return false;
+  m.destination="GATEWAY";m.correlationId=commandId(f.data);
+  m.type=f.kind==Ack?PacketType::ACK:PacketType::RESPONSE;
+  m.messageId=m.correlationId+(f.kind==Ack?"-A-":"-R-")+String(f.token,HEX);
+  d["command_id"]=m.correlationId;
+  if(f.kind==Ack)d["status"]=f.data[6]==3?"BUSY":"ACCEPTED";
+  else{
+   d["status"]="SUCCESS";d["execution_duration_ms"]=E220Core::get16(f.data+7);
+   d["data"]["ok"]=true;d["data"]["transport"]="RADIO:"+config.device_id;
+  }
+ }else if(f.kind==Ina219){
+  m.type=PacketType::TELEMETRY;m.timestamp=E220Core::get32(f.data);
+  d["sensor_type"]="INA219";d["sensor_id"]=sender+"-INA219";d["valid"]=true;d["simulated"]=false;
+  d["parameters"]["bus_voltage"]=E220Core::get16(f.data+4)*0.004f;
+  d["parameters"]["shunt_voltage"]=int16_t(E220Core::get16(f.data+6))*0.01f;
+  const uint16_t resistance=E220Core::get16(f.data+8);
+  if(resistance){
+   const float current=d["parameters"]["shunt_voltage"].as<float>()/resistance;
+   d["parameters"]["current"]=current;d["parameters"]["power"]=d["parameters"]["bus_voltage"].as<float>()*current;
+  }
+ }else if(f.kind==Idle){m.type=PacketType::STATUS;d["radio_idle"]=true;}
+ else return false;
+ serializeJson(d,m.payload);return true;
+}
+void finishSend(bool ok){txLength=0;replyPaused=false;hasResult=true;resultId=txId;resultOk=ok;resultCompact=useCompactTx;}
+void acceptFrame(const Message& parsed,const uint8_t* sender,uint32_t token,uint32_t now){
+ if(isMaster()){
+  radioTurn.clear();masterWaiting=false;masterQuiet=true;
+  masterQuietUntil=now+RadioTurn::TurnaroundMs;error="NONE";finishSend(true);
+ }else radioTurn.open(sender,token,now+RadioTurn::TurnaroundMs,now+RadioTurn::ReplyMs-RadioTurn::ReplyGuardMs);
+ received=parsed;lastSender=identity(sender);rxReady=true;lastRfRxAt=now;hasRssi=false;++rxCount;
+}
+void receiveCompact(size_t n){
+ CompactRadio::Frame f;
+ if(n<CompactRadio::Header+E220Core::Tag||!CompactRadio::unpack(raw,n-E220Core::Tag,f)){++rejected;return;}
+ if(memcmp(f.destination,ownMac,6))return;
+ const uint32_t now=millis();
+ uint8_t parent[6];
+ if(isMaster()){
+  if(!masterWaiting||!radioTurn.matches(f.source,f.token,now))return;
+ }else if(!mac(config.master_id,parent)||!CompactRadio::addressed(f,parent,ownMac)||
+          !compactPeer(parent)||(radioTurn.busy()&&!radioTurn.expired(now)))return;
+ const size_t len=n-E220Core::Tag;
+ uint8_t signature[32];if(!tag(raw,len,signature)){++authFailures;return;}
+ uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[len+i];
+ if(diff){++authFailures;return;}
+ for(auto& item:seen)if(item.used&&now-item.at<E220Core::AssemblyLifetime&&item.transfer==f.token&&!memcmp(item.sender,f.source,6))return;
+ Message m;
+ if(rxReady||!compactMessage(f,m)){++rejected;return;}
+ rememberCompact(f.source);
+ if(!isMaster())compactReplyAllowed=true;
+ acceptFrame(m,f.source,f.token,now);
+ auto& item=seen[seenNext++%32];item.used=true;item.transfer=f.token;item.at=now;memcpy(item.sender,f.source,6);
+}
+void receiveFrame(const uint8_t* encoded,size_t length){size_t n=E220Core::cobsDecode(encoded,length,raw,sizeof(raw));if(n>=4&&raw[0]==0xe2&&raw[1]==0x7a){
+ if(raw[2]==CompactRadio::Version){receiveCompact(n);return;}
+ if(raw[2]!=2){if(++protocolMismatches==1)logger.warn("LORA","Radio protocol mismatch");return;}
+
+ }
+ if(n<=E220Core::Header+E220Core::Tag){++rejected;return;}uint8_t signature[32];size_t body=n-E220Core::Tag;if(!tag(raw,body,signature)){++authFailures;return;}uint8_t diff=0;for(unsigned i=0;i<E220Core::Tag;++i)diff|=signature[i]^raw[body+i];if(diff){++authFailures;return;}E220Core::Fragment f;if(!E220Core::parse(raw,body,f)){++rejected;return;}
  if(memcmp(f.target,ownMac,6)||!memcmp(f.sender,ownMac,6))return;
  const uint32_t now=millis();
  const String sender=identity(f.sender);
@@ -90,16 +240,14 @@ void receiveFrame(const uint8_t* encoded,size_t length){size_t n=E220Core::cobsD
   (isMaster()?parsed.source==sender&&(parsed.destination==config.device_id||parsed.destination=="GATEWAY"):
    parsed.destination==config.device_id&&validPoll(parsed,sender));
  if(valid){
-  if(isMaster()){
-   radioTurn.replied();
-   masterWaiting=false;
-   radioTurn.clear();
-   masterQuiet=true;
-   masterQuietUntil=now+RadioTurn::TurnaroundMs;
-   error="NONE";
-   finishSend(true);
-  }else radioTurn.open(f.sender,f.transfer,now+RadioTurn::TurnaroundMs,now+RadioTurn::ReplyMs-RadioTurn::ReplyGuardMs);
-  received=parsed;lastSender=sender;rxReady=true;lastRfRxAt=now;hasRssi=false;++rxCount;
+  if(!isMaster())compactReplyAllowed=false;
+  if(!isMaster()&&parsed.type==PacketType::HELLO){
+   JsonDocument body;
+   if(!deserializeJson(body,parsed.payload)&&body["radio_wire_version"]==CompactRadio::Version){
+    rememberCompact(f.sender);compactReplyAllowed=true;
+   }
+  }
+  acceptFrame(parsed,f.sender,f.transfer,now);
   auto& item=seen[seenNext++%32];item.used=true;item.transfer=f.transfer;item.crc=f.crc;item.at=now;memcpy(item.sender,f.sender,6);
  }else ++rejected;
  message->used=false;
@@ -214,7 +362,10 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
   masterWaiting=false;
   masterQuiet=true;
   masterQuietUntil=RadioTurn::retryAt(now,esp_random());
-  if(!partialReply){++timeouts;error="RADIO_REPLY_TIMEOUT";}
+  if(!partialReply){
+   if(useCompactTx)forgetCompact(target);
+   ++timeouts;error="RADIO_REPLY_TIMEOUT";
+  }
   finishSend(partialReply);
  }
  if(txAwake&&config.lora_work_mode=="WOR_RX"&&idle()&&now-txAwakeAt>3000&&high&&now-auxSince>=2){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,HIGH);txAwake=false;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
@@ -244,7 +395,7 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
 #ifdef CONDUCTED_BENCH
  if(txCount>=RadioAirtime::BenchTxLimit){finishSend(false);return;}
 #endif
- uint8_t step=E220Core::span(observed.packet);size_t n=E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw,turnToken);uint8_t signature[32];if(!n||!tag(raw,n,signature)){finishSend(false);return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){finishSend(false);++rejected;return;}
+ uint8_t step=E220Core::span(observed.packet);size_t n=useCompactTx?CompactRadio::pack(compactTx,raw):E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw,turnToken);uint8_t signature[32];if(!n||!tag(raw,n,signature)){finishSend(false);return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){finishSend(false);++rejected;return;}
  const size_t prefix=observed.fixed?3:0;
  const uint32_t guard=(RadioAirtime::fragmentUs(n+prefix)+999)/1000+
   uint32_t(n+prefix)*12000/observed.baud+50+
@@ -277,7 +428,7 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
  ++txCount;
 #endif
  ++txPart;++slotFragments;
- if(size_t(txPart)*step>=txLength){
+ if(useCompactTx||size_t(txPart)*step>=txLength){
   ++completed;
   if(isMaster()){
    txLength=0;
@@ -301,7 +452,10 @@ bool LoRaTransport::send(const Message& m){
  if(config.lora_work_mode=="WOR_RX"&&!txAwake){if(state==State::Ready&&idle()&&auxReady()){digitalWrite(config.lora_m0_pin,LOW);digitalWrite(config.lora_m1_pin,LOW);txAwake=true;txAwakeAt=now;state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";}return false;}
  if(!initialized||state!=State::Ready||txLength||hasResult||!RadioTurn::due(now,nextTx)||m.payload.length()>MAX_PAYLOAD_BYTES)return false;
  Message checked;if(!Message::fromJson(m.toJson(),checked))return false;
- txLength=pack(m,txData);if(!txLength)return false;
+ compactTx=CompactRadio::Frame{};
+ if(compactPeer(address)&&(isMaster()||compactReplyAllowed))compactTx.kind=compactKind(m,compactTx);
+ useCompactTx=compactTx.kind!=0;
+ txLength=useCompactTx?1:pack(m,txData);if(!txLength)return false;
  const uint8_t step=E220Core::span(observed.packet);
  if((txLength+step-1)/step>255){txLength=0;return false;}
  memcpy(target,address,sizeof(target));
@@ -309,12 +463,21 @@ bool LoRaTransport::send(const Message& m){
  if(isMaster()&&(txLength+step-1)/step>RadioAirtime::MaxPollFragments){
   logger.warn("LORA","Poll exceeds the fragment limit");finishSend(false);return true;
  }
- txPart=slotFragments=0;transfer=esp_random();turnToken=isMaster()?transfer:radioTurn.claim();txStarted=now;txAwakeAt=now;
+ txPart=slotFragments=0;transfer=esp_random();turnToken=isMaster()?transfer:radioTurn.claim();
+ if(useCompactTx){
+  if(!turnToken)turnToken=transfer=1;
+  memcpy(compactTx.source,ownMac,6);memcpy(compactTx.destination,address,6);compactTx.token=turnToken;
+ }
+ txStarted=now;txAwakeAt=now;
  return true;
 }
 bool LoRaTransport::canReply()const{
  uint8_t parent[6];
  return !bootQuiet&&!budgetBlocked&&config.lora_work_mode!="WOR_TX"&&!isMaster()&&initialized&&state==State::Ready&&!txLength&&!hasResult&&mac(config.master_id,parent)&&radioTurn.canClaim(parent,millis());
+}
+bool LoRaTransport::lastDeliveryCompact(const String& id)const{return resultCompact&&resultId==id;}
+bool LoRaTransport::supportsCompact(const String& peer)const{
+ uint8_t address[6];return mac(peer,address)&&compactPeer(address);
 }
 bool LoRaTransport::canPoll()const{
  return isMaster()&&initialized&&state==State::Ready&&config.lora_work_mode!="WOR_TX"&&!bootQuiet&&!pollCooling&&!budgetBlocked&&!masterQuiet&&!masterWaiting&&!txLength&&!hasResult;
@@ -368,4 +531,4 @@ auto budget=d["airtime_budget"].to<JsonObject>();
 budget["state"]=budgetBlocked?"BUDGET_EXHAUSTED":bootQuiet?"BOOT_QUIET":"AVAILABLE";
 budget["used_us"]=airtime.used(millis());budget["limit_us"]=RadioAirtime::LimitUs;
 budget["refusals"]=budgetDenials;budget["poll_interval_ms"]=RadioAirtime::PollIntervalMs;budget["model_verified"]=false;
-d["tx_pending"]=txLength>0;d["tx_uart_fragments"]=txCount;d["rx_messages"]=rxCount;d["rejected"]=rejected;d["auth_failures"]=authFailures;d["timeouts"]=timeouts;d["reassembly_expired"]=assemblies.expired;d["reassembly_duplicates"]=assemblies.duplicates;d["completed_uart_transfers"]=completed;if(hasRssi&&observed.rssi&&rxCount)d["rssi_dbm"]=lastRssi;else d["rssi_dbm"]=nullptr;d["snr_db"]=nullptr;if(observedValid){auto s=d["observed"].to<JsonObject>();s["address"]=observed.address;s["baud"]=observed.baud;s["channel"]=observed.channel;s["air_rate_code"]=observed.airRate;s["power_dbm"]=observed.power;s["subpacket_bytes"]=observed.packet;s["wor_cycle_ms"]=observed.worMs;s["fixed_mode"]=observed.fixed;s["rssi_enabled"]=observed.rssi;s["lbt"]=observed.lbt;}String out;serializeJson(d,out);return out;}
+d["tx_pending"]=txLength>0;d["tx_uart_fragments"]=txCount;d["rx_messages"]=rxCount;d["rejected"]=rejected;d["auth_failures"]=authFailures;d["protocol_mismatch"]=protocolMismatches;d["timeouts"]=timeouts;d["reassembly_expired"]=assemblies.expired;d["reassembly_duplicates"]=assemblies.duplicates;d["completed_uart_transfers"]=completed;if(hasRssi&&observed.rssi&&rxCount)d["rssi_dbm"]=lastRssi;else d["rssi_dbm"]=nullptr;d["snr_db"]=nullptr;if(observedValid){auto s=d["observed"].to<JsonObject>();s["address"]=observed.address;s["baud"]=observed.baud;s["channel"]=observed.channel;s["air_rate_code"]=observed.airRate;s["power_dbm"]=observed.power;s["subpacket_bytes"]=observed.packet;s["wor_cycle_ms"]=observed.worMs;s["fixed_mode"]=observed.fixed;s["rssi_enabled"]=observed.rssi;s["lbt"]=observed.lbt;}String out;serializeJson(d,out);return out;}

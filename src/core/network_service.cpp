@@ -135,7 +135,11 @@ void queueRadioPoll(uint32_t now){
     auto& c=configManager.get();
     if(c.role!=DeviceRole::MASTER||!loraTransport.canPoll()||!RadioTurn::due(now,radioPollAt))return;
     for(const auto& item:pending)if(item.used&&!item.acknowledged&&item.host.startsWith("RADIO:")&&
-        (item.inFlight||RadioTurn::due(now,item.next)))return;
+        (item.inFlight||RadioTurn::due(now,item.next))
+#ifdef CONDUCTED_BENCH
+        &&loraTransport.supportsCompact(item.host.substring(6))
+#endif
+        )return;
     String candidates[12];
     unsigned count=0;
     for(const auto& p:peers)if(!p.id.isEmpty()&&p.host=="RADIO:"+p.id&&count<12)candidates[count++]=p.id;
@@ -155,12 +159,13 @@ void queueRadioPoll(uint32_t now){
     const String& id=candidates[radioPeerIndex++%count];
     const Peer* known=peer(id);
 #ifdef CONDUCTED_BENCH
-    const bool registerNode=false;
+    const bool registerNode=!loraTransport.supportsCompact(id);
 #else
-    const bool registerNode=!known||known->host!="RADIO:"+id||now-known->seen>RadioAirtime::ReplyAssemblyMs;
+    const bool registerNode=!loraTransport.supportsCompact(id)||!known||known->host!="RADIO:"+id||now-known->seen>RadioAirtime::ReplyAssemblyMs;
 #endif
-    track(make(PacketType::HELLO,id,registerNode?"{\"device_id\":\""+c.device_id+"\",\"role\":\"MASTER\",\"register\":true}":
-        "{\"device_id\":\""+c.device_id+"\",\"role\":\"MASTER\"}"),"RADIO:"+id);
+    String body="{\"device_id\":\""+c.device_id+"\",\"role\":\"MASTER\",\"radio_wire_version\":3";
+    if(registerNode)body+=",\"register\":true";
+    track(make(PacketType::HELLO,id,body+"}"),"RADIO:"+id);
 }
 #include "operational_runtime.inc"
 bool execute(const Message& m,String& result,bool gateway=false,const String& channel="") {
@@ -178,7 +183,7 @@ bool execute(const Message& m,String& result,bool gateway=false,const String& ch
     if(type=="PING"){JsonDocument pong;TransportSwitch::ping(arguments["message"]|"",channel,pong);pong["ok"]=true;if(arguments["message"].is<const char*>())pong["message"]=arguments["message"];serializeJson(pong,result);}
     else if(type=="GET_STATUS"||type=="STATUS")result=bodyStatus();
     else if(type=="DIAGNOSTICS"){JsonDocument all,out;deserializeJson(all,diagnosticsManager.statusJson());out["device"]=all["device"];out["wifi"]=all["wifi"];out["power"]=all["power"];out["lora_status"]=all["lora_status"];out["ethernet_status"]=all["ethernet_status"];out["gateway_reachable"]=all["gateway_reachable"];out["internet_status"]=all["internet_status"];serializeJson(out,result);}
-    else if(type=="GET_CAPABILITIES"){JsonDocument out;out["protocol_version"]=1;out["role"]=configManager.roleString();out["lora_driver"]="E220_SHARED_RV2_HARDWARE_UNVERIFIED";out["remote_cancellation"]=false;auto list=out["commands"].to<JsonArray>();for(auto name:CommandCatalog::Primary)list.add(name);for(auto name:OperationRules::Names)list.add(name);out["operational_extension_version"]=1;serializeJson(out,result);}
+    else if(type=="GET_CAPABILITIES"){JsonDocument out;out["protocol_version"]=1;out["role"]=configManager.roleString();out["lora_driver"]="E220_SHARED_RV3_WITH_RV2_FALLBACK";out["remote_cancellation"]=false;auto list=out["commands"].to<JsonArray>();for(auto name:CommandCatalog::Primary)list.add(name);for(auto name:OperationRules::Names)list.add(name);out["operational_extension_version"]=1;serializeJson(out,result);}
     else if(type=="GET_SENSOR_STATUS")result=sensorManager.healthJson();
     else if(type=="GET_MESH_STATUS"||type=="GET_NODE_STATUS"||type=="GET_ROUTE_INFO"){JsonDocument all,out;deserializeJson(all,networkService.statusJson());out["radio_state"]=loraTransport.isInitialized()?"READY_LINK_UNVERIFIED":"DISABLED_OR_ERROR";out["hardware_verified"]=loraTransport.hasFreshReception();if(type=="GET_ROUTE_INFO")out["routes"]=all["radio_routes"];else if(type=="GET_NODE_STATUS"){auto list=out["nodes"].to<JsonArray>();for(JsonObject node:all["nodes"].as<JsonArray>()){auto entry=list.add<JsonObject>();entry["device_id"]=node["device_id"];entry["status"]=node["status"];entry["age_ms"]=node["age_ms"];}}else{out["node_count"]=all["nodes"].size();out["route_count"]=all["radio_routes"].size();out["pending"]=all["pending"];out["delivery_failures"]=all["delivery_failures"];out["duplicates"]=all["duplicates"];}serializeJson(out,result);}
     else if(type=="GET_TELEMETRY")result=sensorManager.telemetryJson();
@@ -345,7 +350,7 @@ void NetworkService::loop() {
             for(auto& p:pending)if(p.used&&p.packet.messageId==delivered&&p.gateway){p.gateway=false;p.host=c.master_host;p.next=now+1000;}
         for(auto& p:pending)if(p.used&&p.packet.messageId==delivered&&p.gateway==viaGateway&&ok&&
             (DeliveryCore::transportReceiptCompletes(p.command,p.gateway,p.host.startsWith("RADIO:"))||
-             (!p.command&&(p.packet.type==PacketType::ACK||(c.role==DeviceRole::MASTER&&p.host.startsWith("RADIO:"))))))p.used=false;
+             (!p.command&&((p.host.startsWith("RADIO:")&&loraTransport.lastDeliveryCompact(delivered))||p.packet.type==PacketType::ACK||(c.role==DeviceRole::MASTER&&p.host.startsWith("RADIO:"))))))p.used=false;
     }
     Message m;String remote;bool gateway;
     // Exactly one dispatcher owns inbound application messages from all transports.
@@ -365,7 +370,10 @@ void NetworkService::loop() {
             if(incomingBody["register"]==true){
                 bool queued=false;
                 for(const auto& item:pending)if(item.used&&item.host==remote&&item.packet.type==PacketType::HELLO)queued=true;
-                if(!queued)track(make(PacketType::HELLO,m.source,bodyStatus()),remote);
+                if(!queued){
+                    String status=(m.radioWireVersion==3||incomingBody["radio_wire_version"]==3)?"{}":bodyStatus();
+                    track(make(PacketType::HELLO,m.source,status),remote);
+                }
             }
         }else if(m.type==PacketType::ACK&&!m.correlationId.isEmpty()&&incomingBody["received_message_id"].as<String>()==m.correlationId) {
             if(gateway)for(auto& p:pending)if(p.used&&p.packet.messageId==m.correlationId&&p.packet.type==PacketType::ACK&&p.packet.correlationId==operationJob.request.messageId&&operationJob.type=="WIFI_RECONNECT")operationJob.acceptance=true;
@@ -392,7 +400,8 @@ void NetworkService::loop() {
                 if(!p){++failed;return;}p->id=m.source;p->host=remote;p->address=address;p->heartbeat=body["heartbeat_seconds"]|30;p->seen=now;
             }
             Peer* p=peer(m.source);if(!p)return;p->seen=now;
-            if(radio&&m.type==PacketType::STATUS&&body["radio_idle"]==true)continue;
+            if(radio&&((m.type==PacketType::STATUS&&body["radio_idle"]==true)||
+                (m.type==PacketType::HELLO&&body["radio_wire_version"]==3)))continue;
             if(m.type==PacketType::TELEMETRY) {
                 if(!SensorTelemetry::valid(body.as<JsonObjectConst>()))return;
                 p->telemetry=m.payload;
@@ -410,7 +419,7 @@ void NetworkService::loop() {
                 auto& entry=cache[cacheNext++%32];entry=Cached{};entry.source=m.source;entry.id=m.messageId;entry.request=m.typeString()+m.payload;entry.seen=now;
             }
             else ++duplicates;
-            if(m.type!=PacketType::ACK&&DeliveryCore::applicationReceiptRequired(transportManager.localMode(),radio)) {
+            if(m.type!=PacketType::ACK&&m.radioWireVersion!=3&&DeliveryCore::applicationReceiptRequired(transportManager.localMode(),radio)) {
                 Message receipt=make(PacketType::ACK,m.source,"{\"received_message_id\":\""+m.messageId+"\",\"status\":\"RECEIVED\"}");receipt.correlationId=m.messageId;track(receipt,remote);
             }
         } else if(m.type==PacketType::COMMAND||m.type==PacketType::CONFIG_GET||m.type==PacketType::CONFIG_UPDATE)handleCommand(m,remote,gateway);
@@ -418,7 +427,11 @@ void NetworkService::loop() {
     Message bootResult;if(powerManager.bootResponse(bootResult)&&upstream(bootResult))powerManager.bootResponseQueued();
     reportRadioBudget(now);
     if(c.enabled&&(wifiManager.isConnected()||loraTransport.isInitialized())&&!powerManager.draining()&&!(operationJob.active&&(operationJob.type=="WIFI_RECONNECT"||operationJob.type=="MQTT_CONNECT"||operationJob.type=="MQTT_RECONNECT"||operationJob.type=="MQTT_DISCONNECT"))) {
-        if(now-sensorCheckedAt>=1000) {
+        if(now-sensorCheckedAt>=1000
+#ifdef CONDUCTED_BENCH
+           &&c.role==DeviceRole::NODE
+#endif
+        ) {
             sensorCheckedAt=now;JsonDocument sensor;deserializeJson(sensor,sensorManager.telemetryJson());String state=sensor["status"]|"UNKNOWN";
             if(state!=previousSensorStatus) {
                 previousSensorStatus=state;
@@ -427,7 +440,11 @@ void NetworkService::loop() {
                 if(state=="READ_ERROR")logger.warn("SENSOR","DHT11 read failed; measurements omitted");
             }
         }
-        if(now-diagnosticAt>=60000) {
+        if(now-diagnosticAt>=60000
+#ifdef CONDUCTED_BENCH
+           &&c.role==DeviceRole::NODE
+#endif
+        ) {
             diagnosticAt=now;JsonDocument d,history;deserializeJson(d,bodyStatus());deserializeJson(history,logger.getRecentJson());
             auto errors=d["recent_errors"].to<JsonArray>();auto records=history.as<JsonArray>();
             for(int i=(int)records.size()-1;i>=0&&errors.size()<3;--i)if(records[i]["level"].as<String>()!="INFO")errors.add(records[i]);
@@ -448,9 +465,10 @@ void NetworkService::loop() {
                     String body;serializeJson(sample,body);
                     track(make(PacketType::TELEMETRY,parent,body),"RADIO:"+parent);
                 }
-            }else
-#endif
+            }
+#else
             for(unsigned i=0;i<3;++i)upstream(make(PacketType::TELEMETRY,c.role==DeviceRole::MASTER?"GATEWAY":c.master_id,sensorManager.telemetryJson(i)));
+#endif
         }
         // HTTP polling works behind NAT and remains available when MQTT is disabled or disconnected.
         bool pendingWork=false;for(const auto& item:pending)if(item.used){pendingWork=true;break;}
@@ -479,6 +497,9 @@ void NetworkService::loop() {
             else if(p.packet.type!=PacketType::ACK)rank=3;
         }else if(radio&&!p.command)rank=p.packet.type==PacketType::ACK?1:2;
         if(rank!=priority)continue;
+#ifdef CONDUCTED_BENCH
+        if(radio&&c.role==DeviceRole::MASTER&&p.command&&!loraTransport.supportsCompact(p.host.substring(6)))continue;
+#endif
         if(!DeliveryCore::eligible(p.inFlight,p.command,p.acknowledged,now,p.next))continue;
         if(radio?!RadioTurn::mayAttempt(p.attempts,c.retry_count):p.attempts>c.retry_count){
             p.used=false;++failed;if(p.command)latestState="TIMEOUT";continue;
