@@ -17,12 +17,16 @@
 #include "core/power_manager.h"
 #include "core/connection_indicators.h"
 #include "communication/lora_transport.h"
+#include "communication/conducted_build.h"
 #include "config/hardware_profile.h"
 #include "config/transport_trial.h"
 namespace {bool roleReady=false,identityReady=false;}
 
 void setup() {
     logger.begin(115200);
+#ifdef CONDUCTED_BENCH
+    Serial.println("CONDUCTED BENCH BUILD - NOT FOR OVER-THE-AIR USE");
+#endif
     if(!configManager.begin())logger.error("CONFIG","NVS unavailable; restart required before commissioning");
     mqttStaging.begin();TransportSwitch::begin();Commissioning::begin();
     identityReady=deviceIdentity.begin();systemManager.begin();watchdogManager.begin(10);

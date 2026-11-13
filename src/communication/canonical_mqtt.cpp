@@ -45,7 +45,11 @@ bool send(const String& type,JsonObjectConst data,const String& id="",const Stri
  ++publishAttempts;if(!client||!up){publishError=1;return false;}if(esp_mqtt_client_get_outbox_size(client)>16384){publishError=2;return false;}String topic;if(!MqttContract::topic(profile.as<JsonObjectConst>(),type,topic))return false;
  JsonDocument d;d["schema_version"]=1;d["message_id"]=id.isEmpty()?device+":"+String(esp_random(),HEX)+":"+String(++sequence):id;
  d["gateway_id"]=profile["gateway_id"];d["master_id"]=device;d["device_id"]=device;d["message_type"]=type;
- auto now=time(nullptr);uint32_t stamp=MqttRetryStamp::select(now>1700000000?uint32_t(now):0,data["packet"].is<JsonObjectConst>(),data["packet"]["timestamp"]|0U);d["timestamp"]=stamp;if(type!="status"&&type!="telemetry"){if(stamp<1700000000||uint64_t(stamp)+120<uint64_t(now))return false;d["expires_at"]=stamp+120;}
+ auto now=time(nullptr);uint32_t stamp=MqttRetryStamp::select(now>1700000000?uint32_t(now):0,data["packet"].is<JsonObjectConst>(),data["packet"]["timestamp"]|0U);
+ // A relayed LoRa result can wait several polls. Preserve the inner packet's
+ // timestamp while giving the current MQTT delivery its own validity window.
+ if(type=="command_ack"&&data["packet"]["source"].as<String>()!=device&&now>1700000000)stamp=uint32_t(now);
+ d["timestamp"]=stamp;if(type!="status"&&type!="telemetry"){if(stamp<1700000000||uint64_t(stamp)+120<uint64_t(now))return false;d["expires_at"]=stamp+120;}
  if(correlation.length())d["correlation_id"]=correlation;d["data"]=data;String raw;serializeJson(d,raw);
  if(d.overflowed()||raw.length()>6144){publishError=3;return false;}
  bool ok=esp_mqtt_client_enqueue(client,topic.c_str(),raw.c_str(),raw.length(),1,0,true)>=0;if(ok){++enqueued;publishError=0;lastQueued=time(nullptr);}else publishError=4;return ok;
@@ -88,11 +92,12 @@ void receive(const Received& r){
  if(d["device_id"].as<String>()==device)return; // Ignore this Master's own config/chat echoes.
  if(d["device_id"].as<String>()!="GATEWAY")return;
  auto now=time(nullptr);if(now<1700000000||!d["timestamp"].is<uint32_t>()||!d["expires_at"].is<uint32_t>())return;
- uint32_t stamp=d["timestamp"],expires=d["expires_at"];if(!stamp||stamp>now+30||expires<=stamp||expires>stamp+300||expires<now)return;
+ uint32_t stamp=d["timestamp"],expires=d["expires_at"];if(!stamp||stamp>now+30||expires<=stamp||expires<now)return;
  String mid=d["message_id"].as<String>(),hash=MqttDigest::hash(raw),replyCache;
  for(auto& old:receipts)if(old.id==mid){if(old.hash!=hash){++dropped;return;}if(old.reply.length()){JsonDocument reply;deserializeJson(reply,old.reply);send("chat/ack",reply.as<JsonObjectConst>(),"",mid);return;}if(type!="command")return;}
  auto data=d["data"].as<JsonObjectConst>();bool accepted=false;
- if(type=="command"&&data.size()==1&&data["packet"].is<JsonObjectConst>()){
+ if(type=="command"&&data["packet"].is<JsonObjectConst>()&&(data.size()==1||
+    (data.size()==2&&data["radio_async"]==true&&data["packet"]["destination"].as<String>()!=device))){
    String packet;serializeJson(data["packet"],packet);Message m;if(Message::fromJson(packet,m)&&m.source=="GATEWAY"&&(m.destination==device||m.destination.length()>0)&&(m.type==PacketType::COMMAND||m.type==PacketType::CONFIG_GET||m.type==PacketType::CONFIG_UPDATE))accepted=transportManager.enqueue(packet,"MQTT",true);
  }else if(type=="config"){
    String op=data["op"]|"";

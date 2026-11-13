@@ -15,7 +15,7 @@ namespace {
 HardwareSerial normalUart(2),diagnosticUart(1);bool useDiagnosticUart=false;
 HardwareSerial& radioUart(){return useDiagnosticUart?diagnosticUart:normalUart;}
 DeviceConfig config;
-enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Writing,Restoring,Ready,SleepSwitch,Sleeping,Fault};
+enum class State:uint8_t {Off,WaitIdle,WaitMode,Reading,Writing,BenchKey,Restoring,Ready,SleepSwitch,Sleeping,Fault};
 State state=State::Off;const char* error="DISABLED";bool initialized=false,probeOnly=false,restoreHigh0=false,restoreHigh1=false;
 bool probePinsConfigured=false,settingsQuerySent=false;const char* probePhase="NOT_STARTED";
 uint32_t since=0,auxSince=0,nextTx=0,txStarted=0;bool auxHigh=false;
@@ -32,6 +32,16 @@ RadioAirtime::Budget airtime;
 uint32_t bootTxAt=0,nextPollAt=0,budgetDenials=0,turnToken=0;
 uint8_t slotFragments=0;
 bool bootQuiet=true,pollCooling=false,replyPaused=false,budgetBlocked=false,partialReply=false;
+#ifdef CONDUCTED_BENCH
+constexpr uint8_t BenchRegisters[]={0xc1,0,6,0,0,0x62,0x03,0x10,0x83};
+constexpr uint8_t BenchKeyWrite[]={0xc0,6,2,0,0}, BenchKeyEcho[]={0xc1,6,2,0,0};
+bool benchKeyWritten=false;
+void printBenchBytes(const char* label,const uint8_t* bytes,size_t size){
+ Serial.printf("[BENCH] %lu %s",(unsigned long)millis(),label);
+ for(size_t i=0;i<size;++i)Serial.printf(" %02X",bytes[i]);
+ Serial.println();
+}
+#endif
 uint32_t masterQuietUntil=0;
 bool masterWaiting=false,masterQuiet=true;
 struct Seen {uint8_t sender[6]{};uint32_t transfer=0,crc=0,at=0;bool used=false;};Seen seen[32];uint8_t seenNext=0;
@@ -96,6 +106,18 @@ bool LoRaTransport::requestProbe(bool readOnly,uint8_t diagnosticPort){
  normalUart.end();diagnosticUart.end();useDiagnosticUart=diagnosticPort==1;
  pinMode(config.lora_aux_pin,INPUT);pinMode(config.lora_m0_pin,INPUT);pinMode(config.lora_m1_pin,INPUT);restoreHigh0=digitalRead(config.lora_m0_pin);restoreHigh1=digitalRead(config.lora_m1_pin);digitalWrite(config.lora_m0_pin,restoreHigh0);digitalWrite(config.lora_m1_pin,restoreHigh1);pinMode(config.lora_m0_pin,OUTPUT);pinMode(config.lora_m1_pin,OUTPUT);probePinsConfigured=true;settingsQuerySent=false;settingsLength=0;settingsAttempts=0;settingsReader.reset();probePhase="WAIT_IDLE_AUX";radioUart().end();radioUart().setRxBufferSize(512);radioUart().setTxBufferSize(256);radioUart().begin(9600,SERIAL_8N1,config.lora_rx_pin,config.lora_tx_pin);gpio_pullup_en((gpio_num_t)config.lora_rx_pin);radioUart().setRxTimeout(2);radioUart().setRxFIFOFull(1);wrote=false;observedValid=false;observed=E220Core::Settings{};state=State::WaitIdle;since=millis();auxSince=since;auxHigh=false;error="INSPECTING";return true;}
 void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==State::Fault)return;bool high=auxReady();if(high&&!auxHigh)auxSince=now;auxHigh=high;
+#ifdef CONDUCTED_BENCH
+ if(state==State::BenchKey){
+  while(settingsLength<sizeof(BenchKeyEcho)&&radioUart().available())settingsBytes[settingsLength++]=radioUart().read();
+  if(settingsLength==sizeof(BenchKeyEcho)){
+   printBenchBytes("KEY ECHO",settingsBytes,settingsLength);
+   if(memcmp(settingsBytes,BenchKeyEcho,sizeof(BenchKeyEcho))){restore("BENCH_KEY_WRITE_REJECTED");return;}
+   benchKeyWritten=true;state=State::WaitMode;since=auxSince=now;return;
+  }
+  if(now-since>3000)restore("BENCH_KEY_WRITE_TIMEOUT");
+  return;
+ }
+#endif
  if(state==State::Sleeping)return;
  if(state==State::SleepSwitch){if(high&&now-since>=5&&now-auxSince>=2)state=State::Sleeping;else if(now-since>3000){state=State::Fault;error="SLEEP_MODE_TIMEOUT";}return;}
  if(state!=State::Ready&&state!=State::Restoring&&now-since>3000){
@@ -111,14 +133,34 @@ void LoRaTransport::loop(){uint32_t now=millis();if(state==State::Off||state==St
  if(state==State::Reading){
   for(unsigned budget=0;budget<32&&radioUart().available();++budget){if(settingsReader.add(radioUart().read(),observed)){observedValid=true;break;}}
   settingsLength=settingsReader.length;memcpy(settingsBytes,settingsReader.bytes,settingsLength);
-  if(!observedValid)return;probePhase="PUBLIC_REGISTERS_READ";if(probeOnly){restore("PROBE_COMPLETE_NO_RF");return;}if(!matches()){
+  if(!observedValid)return;probePhase="PUBLIC_REGISTERS_READ";if(probeOnly){restore("PROBE_COMPLETE_NO_RF");return;}
+#ifdef CONDUCTED_BENCH
+ printBenchBytes(benchKeyWritten?"CFG AFTER":"CFG BEFORE",settingsBytes,settingsLength);
+ if(settingsLength!=sizeof(BenchRegisters)||memcmp(settingsBytes,BenchRegisters,sizeof(BenchRegisters))||
+    config.lora_work_mode!="NORMAL"){
+  Serial.println("[BENCH] STOP: unexpected public registers or work mode");
+  restore("BENCH_UNEXPECTED_PROFILE_NO_RF");return;
+ }
+ if(!benchKeyWritten){
+  if(radioUart().availableForWrite()<int(sizeof(BenchKeyWrite)))return;
+  if(radioUart().write(BenchKeyWrite,sizeof(BenchKeyWrite))!=sizeof(BenchKeyWrite)){restore("BENCH_KEY_WRITE_FAILED");return;}
+  ++registerWrites;settingsLength=0;state=State::BenchKey;since=now;return;
+ }
+#else
+ if(!matches()){
  if(!config.lora_apply_settings||wrote){restore("SETTINGS_MISMATCH_NO_RF");return;}
  auto desired=observed;desired.address=(uint16_t(config.lora_address_high)<<8)|config.lora_address_low;desired.baud=config.lora_baud;desired.channel=config.lora_channel;desired.airRate=config.lora_air_rate;desired.power=config.lora_tx_power;desired.packet=config.lora_packet_bytes;desired.fixed=config.lora_fixed_mode;desired.rssi=config.lora_rssi;desired.lbt=config.lora_lbt;desired.worMs=config.lora_wor_cycle_ms;
  if(!E220Core::encodeSettings(desired,settingsBytes+3,desiredBytes)){restore("INVALID_REGISTER_CONFIGURATION");return;}uint8_t write[9]={0xc0,0,6};memcpy(write+3,desiredBytes,6);if(radioUart().availableForWrite()<9)return;radioUart().write(write,9);wrote=true;++registerWrites;settingsLength=0;state=State::Writing;since=now;return;}
+#endif
 if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return;}unsigned mode=E220Core::mode(config.lora_work_mode.c_str());digitalWrite(config.lora_m0_pin,mode&1);digitalWrite(config.lora_m1_pin,(mode>>1)&1);radioUart().updateBaudRate(observed.baud);state=State::Restoring;since=now;error="STARTING_NORMAL_MODE";return;}
  if(state==State::Restoring){if(high&&now-since>=5&&now-auxSince>=2){if(!strcmp(error,"STARTING_NORMAL_MODE")){state=State::Ready;initialized=true;error="NONE";logger.info("LORA","Read-only settings check passed; normal mode ready (hardware link unverified)");}else{state=State::Fault;radioUart().end();}}else if(now-since>3000){state=State::Fault;radioUart().end();error="MODE_RESTORE_TIMEOUT";++timeouts;}return;}
  if(state!=State::Ready)return;
- if(bootQuiet&&RadioTurn::due(now,bootTxAt))bootQuiet=false;
+ if(bootQuiet&&RadioTurn::due(now,bootTxAt)){
+  bootQuiet=false;
+#ifdef CONDUCTED_BENCH
+  Serial.printf("[BENCH] %lu boot holdoff elapsed, transmissions=%lu\n",(unsigned long)now,(unsigned long)txCount);
+#endif
+ }
  if(pollCooling&&RadioTurn::due(now,nextPollAt))pollCooling=false;
  const uint32_t used=airtime.used(now);
  if(budgetBlocked&&used<=RadioAirtime::LimitUs-RadioAirtime::WorstFragmentUs)budgetBlocked=false;
@@ -136,7 +178,11 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
  const auto signal=[](int rssi){lastRssi=rssi;hasRssi=true;};
  if(rxStream.expire(now,signal))++rejected;
  for(unsigned budget=0;budget<256&&radioUart().available();++budget){
-  if(!rxStream.add(radioUart().read(),now,observed.rssi,
+  const uint8_t byte=radioUart().read();
+#ifdef CONDUCTED_BENCH
+  Serial.printf("[BENCH RX] %lu %02X\n",(unsigned long)now,byte);
+#endif
+  if(!rxStream.add(byte,now,observed.rssi,
    [](const uint8_t* bytes,size_t length){
     const uint32_t before=rxCount;
     receiveFrame(bytes,length);
@@ -151,6 +197,9 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
   finishSend(false);error=high?"MESSAGE_TX_EXPIRED":"AUX_BUSY_TIMEOUT";++timeouts;
  }
  if(!txLength||replyPaused||!high||now-auxSince<2||(int32_t)(now-nextTx)<0)return;
+#ifdef CONDUCTED_BENCH
+ if(txCount>=RadioAirtime::BenchTxLimit){finishSend(false);return;}
+#endif
  uint8_t step=E220Core::span(observed.packet);size_t n=E220Core::fragment(txData,txLength,transfer,ownMac,target,step,txPart,raw,turnToken);uint8_t signature[32];if(!n||!tag(raw,n,signature)){finishSend(false);return;}memcpy(raw+n,signature,E220Core::Tag);n=E220Core::cobsEncode(raw,n+E220Core::Tag,encoded,sizeof(encoded));if(!n||n>observed.packet){finishSend(false);++rejected;return;}
  const size_t prefix=observed.fixed?3:0;
  const uint32_t guard=(RadioAirtime::fragmentUs(n+prefix)+999)/1000+
@@ -165,6 +214,13 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
   return;
  }
  nextTx=now+guard;
+#ifdef CONDUCTED_BENCH
+ nextTx=now+RadioAirtime::BenchTxGapMs;
+ ++txCount; // Charge attempts, including a partial UART write.
+ Serial.printf("[BENCH TX] %lu count=%lu bytes=%u airtime_us=%lu budget_used_us=%lu limit_us=%lu\n",
+  (unsigned long)now,(unsigned long)txCount,(unsigned)(n+prefix),(unsigned long)RadioAirtime::fragmentUs(n+prefix),
+  (unsigned long)airtime.used(now),(unsigned long)RadioAirtime::LimitUs);
+#endif
  if(isMaster()&&!slotFragments){pollCooling=true;nextPollAt=now+RadioAirtime::PollIntervalMs;}
  const uint8_t address[]={255,255,observed.channel};
  if((prefix&&radioUart().write(address,prefix)!=prefix)||radioUart().write(encoded,n)!=n){
@@ -173,7 +229,10 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
   finishSend(false);
   return;
  }
- ++txCount;++txPart;++slotFragments;
+#ifndef CONDUCTED_BENCH
+ ++txCount;
+#endif
+ ++txPart;++slotFragments;
  if(size_t(txPart)*step>=txLength){
   ++completed;
   if(isMaster()){
@@ -184,6 +243,9 @@ if(!E220Core::span(observed.packet)){restore("SUBPACKET_TOO_SMALL_NO_RF");return
  }else if(!isMaster()&&!RadioAirtime::slotAllows(slotFragments,RadioAirtime::MaxReplyFragments))replyPaused=true;
 }
 bool LoRaTransport::send(const Message& m){
+#ifdef CONDUCTED_BENCH
+ if(txCount>=RadioAirtime::BenchTxLimit)return false;
+#endif
  const uint32_t now=millis();
  const String hop=m.nextHop.isEmpty()?m.destination:m.nextHop;
  uint8_t address[6];

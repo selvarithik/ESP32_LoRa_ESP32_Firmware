@@ -1,10 +1,16 @@
 #pragma once
 #include <stdint.h>
 #include <string.h>
+#include "conducted_build.h"
 
 namespace RadioTurn {
+#ifdef CONDUCTED_BENCH
+constexpr uint8_t MaxRetries=1;
+constexpr uint32_t ReplyMs=48000;
+#else
 constexpr uint8_t MaxRetries=2;
 constexpr uint32_t ReplyMs=20000;
+#endif
 constexpr uint32_t ReplyGuardMs=2000;
 constexpr uint32_t TurnaroundMs=100;
 constexpr uint32_t RetryJitterMinMs=250,RetryJitterRangeMs=751;

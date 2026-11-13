@@ -87,6 +87,14 @@ void complete(const String& id,const String& source) {for(auto& p:pending)if(p.u
 String bodyStatus() {
     JsonDocument d;auto& c=configManager.get();d["device_id"]=c.device_id;d["device_name"]=c.device_name;d["role"]=configManager.roleString();d["master_id"]=c.role==DeviceRole::MASTER?c.device_id:masterId();d["node_address"]=c.node_address;
     uint8_t mac[6];esp_read_mac(mac,ESP_MAC_WIFI_STA);char macText[18];snprintf(macText,sizeof(macText),"%02X:%02X:%02X:%02X:%02X:%02X",mac[0],mac[1],mac[2],mac[3],mac[4],mac[5]);d["hardware_mac"]=macText;d["firmware_version"]=FIRMWARE_VERSION;d["configuration_revision"]=c.configuration_revision;d["heartbeat_seconds"]=c.heartbeat_seconds;d["uptime_s"]=millis()/1000;d["free_heap"]=ESP.getFreeHeap();d["wifi_connected"]=wifiManager.isConnected();if(wifiManager.isConnected())d["wifi_rssi"]=wifiManager.rssi();
+#ifdef CONDUCTED_BENCH
+    if(c.role==DeviceRole::MASTER)d["bench_build"]=true;
+#endif
+    if(c.role==DeviceRole::MASTER&&loraTransport.isInitialized()){
+        d["radio_poll_interval_ms"]=RadioAirtime::PollIntervalMs;
+        auto children=d["radio_poll_children"].to<JsonArray>();
+        for(const auto& p:peers)if(!p.id.isEmpty()&&p.host=="RADIO:"+p.id)children.add(p.id);
+    }
     d["gateway_reachable"]=transportManager.gatewayConnected();d["transport"]=transportManager.mqttConnected()?"MQTT":"HTTP";
     d["telemetry_seconds"]=c.telemetry_seconds;d["simulated"]=false;JsonDocument power;deserializeJson(power,powerManager.statusJson());d["operating_state"]=power["state"];
     JsonDocument transportState;deserializeJson(transportState,TransportSwitch::status());d["transport_switch"]=transportState.as<JsonVariant>();d["reset_reason"]=systemManager.resetReason();d["internet_status"]=transportManager.internetStatus();
@@ -200,7 +208,8 @@ void handleCommand(const Message& m,const String& remote,bool gateway) {
     time_t utc=time(nullptr);
     String operation=CommandCatalog::canonical(d["command"].as<const char*>());bool readOnly=operation=="PING"||operation.startsWith("GET_")||operation=="STATUS"||operation=="DIAGNOSTICS"||operation=="WIFI_SCAN";
     if((gateway||!readOnly)&&operation!="SYNC_TIME"&&(!m.timestamp||utc<1700000000)){++failed;return;}
-    if(m.timestamp&&utc>1600000000&&(m.timestamp>utc+30||utc-m.timestamp>configManager.get().message_max_age_ms/1000)){++failed;return;}
+    const uint32_t maxAge=remote.startsWith("RADIO:")?RadioAirtime::ReplyAssemblyMs:configManager.get().message_max_age_ms;
+    if(m.timestamp&&utc>1600000000&&(m.timestamp>utc+30||utc-m.timestamp>maxAge/1000)){++failed;return;}
     for(auto& c:cache)if(c.source==m.source&&c.id==cid&&c.request!=m.payload){++failed;return;}
     String rejection=CommandRules::admission(d.as<JsonObjectConst>());bool repeated=false;
     for(auto& c:cache)if(c.source==m.source&&c.id==cid)repeated=true;
@@ -400,7 +409,22 @@ void NetworkService::loop() {
         queueRadioPoll(now);
         if(now-helloAt>=30000+helloJitter){helloAt=now;helloJitter=esp_random()%2000;upstream(make(PacketType::HELLO,c.role==DeviceRole::MASTER?"GATEWAY":c.master_id,bodyStatus()));}
         if(now-heartbeatAt>=c.heartbeat_seconds*1000UL){heartbeatAt=now;upstream(make(PacketType::HEARTBEAT,c.role==DeviceRole::MASTER?"GATEWAY":c.master_id,bodyStatus()));}
-        if(now-telemetryAt>=c.telemetry_seconds*1000UL){telemetryAt=now;for(unsigned i=0;i<3;++i)upstream(make(PacketType::TELEMETRY,c.role==DeviceRole::MASTER?"GATEWAY":c.master_id,sensorManager.telemetryJson(i)));}
+        if(now-telemetryAt>=c.telemetry_seconds*1000UL){
+            telemetryAt=now;
+#ifdef CONDUCTED_BENCH
+            if(c.role==DeviceRole::NODE){
+                // Exercise the INA219 radio path even if the saved policy
+                // prefers direct HTTP. This override never changes NVS.
+                JsonDocument sample;deserializeJson(sample,sensorManager.telemetryJson(1));
+                const String parent=masterId();
+                if(sample["valid"]==true&&!parent.isEmpty()){
+                    String body;serializeJson(sample,body);
+                    track(make(PacketType::TELEMETRY,parent,body),"RADIO:"+parent);
+                }
+            }else
+#endif
+            for(unsigned i=0;i<3;++i)upstream(make(PacketType::TELEMETRY,c.role==DeviceRole::MASTER?"GATEWAY":c.master_id,sensorManager.telemetryJson(i)));
+        }
         // HTTP polling works behind NAT and remains available when MQTT is disabled or disconnected.
         bool pendingWork=false;for(const auto& item:pending)if(item.used){pendingWork=true;break;}
         if(DeliveryCore::pollGateway(transportManager.localMode(),CanonicalMqtt::configured())&&!pendingWork&&transportManager.idle()&&(c.role==DeviceRole::MASTER||(transportManager.localMode()&&c.routing_policy!="MASTER_ONLY"))&&now-pollAt>=2000&&(!c.gateway_token.isEmpty()||!c.local_ip_token.isEmpty())&&!c.server_host.isEmpty()) {pollAt=now;Message poll=make(PacketType::STATUS,"GATEWAY",bodyStatus());track(poll,c.server_host,true);}
@@ -411,8 +435,8 @@ void NetworkService::loop() {
     now=millis(); // Packets queued above may have a newer timestamp than the loop entry.
     for(auto& p:pending)if(p.used) {
         if(p.inFlight)continue;
-        const bool retainedReply=c.role==DeviceRole::NODE&&p.host.startsWith("RADIO:")&&
-            (p.packet.type==PacketType::ACK||p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO);
+        const bool retainedReply=p.host.startsWith("RADIO:")&&(p.command||p.packet.type==PacketType::ACK||
+            p.packet.type==PacketType::RESPONSE||p.packet.type==PacketType::HELLO);
         if(now-p.created>(retainedReply?RadioAirtime::ReplyAssemblyMs:c.message_max_age_ms)){
             p.used=false;++failed;latestState=p.command?"TIMEOUT":latestState;continue;
         }

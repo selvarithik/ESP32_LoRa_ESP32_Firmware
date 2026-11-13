@@ -11,7 +11,10 @@
 static void rollingAirtimeAndFragmentCap(){
  using namespace RadioAirtime;
  static_assert(WorstFragmentUs==6754304&&WorstPollUs==13508608&&WorstReplyUs==13508608,"Unexpected airtime model");
- static_assert(ExchangesPerHour==2&&PollIntervalMs==1800000&&BootQuietMs>=HourMs,"Unsafe cadence");
+ static_assert(ExchangesPerHour==2&&ProductionPollIntervalMs==1800000,"Unsafe production cadence");
+#ifndef CONDUCTED_BENCH
+ static_assert(PollIntervalMs==ProductionPollIntervalMs&&LimitUs==36000000&&BootQuietMs>=HourMs,"Bench limits leaked into production");
+#endif
  const uint32_t start=UINT32_MAX-2000;
  Budget budget;
  for(unsigned i=0;i<5;++i){ // Discovery, original poll, two retries and a reply fragment use the same ledger API.

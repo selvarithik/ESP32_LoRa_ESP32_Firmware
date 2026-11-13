@@ -22,7 +22,9 @@ inline bool incoming(const String& raw,const String& topic,JsonObjectConst profi
  if(!d["correlation_id"].isNull()&&!id(d["correlation_id"]))return false;if(!d["configuration_revision"].isNull()&&!number(d["configuration_revision"]))return false;
  String expected;if(!MqttContract::topic(profile,d["message_type"]|"",expected)||topic!=expected)return false;
  auto now=time(nullptr);if(now<1700000000||!number(d["timestamp"])||!number(d["expires_at"]))return false;
- uint32_t stamp=d["timestamp"],expires=d["expires_at"];if(!stamp||stamp>now+30||expires<=stamp||uint64_t(expires)>uint64_t(stamp)+300||expires<now)return false;
+ const bool radio=d["message_type"]=="command"&&d["data"]["radio_async"]==true&&d["data"]["packet"]["destination"].as<String>()!=master;
+ const uint32_t window=radio?10800:300;
+ uint32_t stamp=d["timestamp"],expires=d["expires_at"];if(!stamp||stamp>now+30||expires<=stamp||uint64_t(expires)>uint64_t(stamp)+window||expires<now)return false;
  return d["message_type"].as<String>()!="config"||control(d["data"]);
 }
 }

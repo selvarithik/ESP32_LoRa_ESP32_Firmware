@@ -1,10 +1,11 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+#include "conducted_build.h"
 
 namespace RadioAirtime {
 constexpr uint32_t HourMs=3600000;
-constexpr uint32_t LimitUs=36000000;
+constexpr uint32_t ProductionLimitUs=36000000;
 constexpr size_t MaxUartBytes=200, FixedAddressBytes=3;
 constexpr size_t ModuleAllowanceBytes=16;
 constexpr uint8_t MaxPollFragments=2, MaxReplyFragments=2;
@@ -22,12 +23,19 @@ constexpr uint32_t fragmentUs(size_t uartBytes){
 constexpr uint32_t WorstFragmentUs=fragmentUs(MaxUartBytes+FixedAddressBytes);
 constexpr uint32_t WorstPollUs=MaxPollFragments*WorstFragmentUs;
 constexpr uint32_t WorstReplyUs=MaxReplyFragments*WorstFragmentUs;
-constexpr uint32_t ExchangesPerHour=LimitUs/(WorstPollUs>WorstReplyUs?WorstPollUs:WorstReplyUs);
-constexpr uint32_t PollIntervalMs=(HourMs+ExchangesPerHour-1)/ExchangesPerHour;
-// Keep RF silent for the full window after any reboot. The ledger is RAM only.
-constexpr uint32_t BootQuietMs=HourMs+15000; // Include a possible buffered transmission at reset.
+// The 200-byte transparent profile's larger typical response costs 12.198 s.
+// The ledger remains authoritative for other frame sizes and traffic mixes.
+constexpr uint32_t TypicalTurnUs=fragmentUs(200)+fragmentUs(161);
+constexpr uint32_t ExchangesPerHour=ProductionLimitUs/TypicalTurnUs;
+constexpr uint32_t ProductionPollIntervalMs=(HourMs+ExchangesPerHour-1)/ExchangesPerHour;
+#ifdef CONDUCTED_BENCH
+constexpr uint32_t LimitUs=600000000, PollIntervalMs=60000, BootQuietMs=15000;
+constexpr uint32_t BenchTxGapMs=20000, BenchTxLimit=20;
+#else
+constexpr uint32_t LimitUs=ProductionLimitUs, PollIntervalMs=ProductionPollIntervalMs, BootQuietMs=HourMs+15000;
+#endif
 constexpr uint32_t ReplyAssemblyMs=PollIntervalMs*3;
-static_assert(ExchangesPerHour>0&&PollIntervalMs*ExchangesPerHour>=HourMs,"Poll interval exceeds airtime budget");
+static_assert(ExchangesPerHour>0&&ProductionPollIntervalMs*ExchangesPerHour>=HourMs,"Poll interval exceeds airtime budget");
 constexpr bool slotAllows(uint8_t sent,uint8_t cap){return sent<cap;}
 
 class Budget {
