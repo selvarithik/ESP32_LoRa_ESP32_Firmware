@@ -55,3 +55,20 @@ Under the unverified SF11/125 kHz model and 36 s per rolling hour per node,
 the conservative integer limit for these one-fragment turns is 18 per hour
 with 200 seconds between starts. A complete PING needs separate ACK and
 result turns. Mixed RV2 traffic remains subject to the rolling refusal limit.
+
+## Firmware implementation
+
+The negotiated firmware codec uses a 22-byte header, including the full
+source and destination MACs and a four-byte poll token. It sends a 40-byte
+idle reply, 42-byte registration, 41-byte poll, 50-byte empty Gateway PING,
+47-byte ACK, 49-byte successful PING result, or 50-byte INA219 frame.
+Sizes include the 16-byte HMAC and the two COBS bytes. INA219 also carries
+the configured shunt resistance so the Gateway can recover current and
+power when that value is available. An authenticated RV2 poll advertises
+v3 support. An addressed v3 registration reply confirms support to the
+Master. Other commands and detailed status can continue using RV2.
+
+The modeled 50-byte frame takes 2.298 s. The production 30-minute interval
+and 36-second rolling limit continue to apply. The bench interval remains
+60 seconds. Unsupported frame versions increment the protocol-mismatch
+counter on firmware that includes this feature.
