@@ -71,3 +71,17 @@ Gateway LoRa Mesh Monitor uses the existing Gateway sign-in and refreshes radio 
 At 00:57:41 the standalone COM10 receiver captured one authenticated-format v3 idle frame from the bench Slave. It received 41 UART bytes, ending in `40 0D 13 00 DF`. The delimiter was `00` and the receiver appended `DF` (−33 dBm). The public register readback was `C1 00 06 00 00 62 03 10 83`; REG3 bit 7 was set. The Slave probe used one charged 40-byte transmission with 2.036 s modeled airtime. The capture proves the receive-only module path can report RSSI. A difference in the production TX-to-RX path is still under investigation. Master-side RSSI unverified.
 
 The bench-only USB operation `bench_rssi_probe` permits one authenticated-format idle fragment from an otherwise silent Slave after its holdoff. It uses the normal airtime ledger and the normal transmit gap. The standalone receiving board does not transmit.
+
+
+## November 14 reverse chat and monitoring retest (IST)
+
+Both production bench apps were restored in their active slots, Slave first. Both read back `C1 00 06 00 00 62 03 10 83`. The production UART settings were aligned with the standalone receiver. Production receptions still appended invalid `00` or `FF` after transmitting. The standalone result isolates the difference to the production turnaround conditions; it does not identify a firmware or radio root cause. **Master-side RSSI unverified.**
+
+| Message | Queued | Sent | Received | Sender delivery receipt |
+| --- | --- | --- | --- | --- |
+| Slave hello-m | 01:02:42 | 01:02:58 | 01:02:58 | 01:03:59 |
+| Master hello-s | 01:02:43 | 01:02:57 | 01:02:58 | 01:04:01 |
+
+The Master received the reverse text with trailer `97 87 00 00` (RSSI n/a). The Slave received the forward text with trailer `2F 00 DF` (−33 dBm). The authenticated peer receipts changed both sender ticks to delivered. The two 69-byte text frames each consumed 2.822 s of modeled airtime. The Master logged 17.388 s and the Slave 10.764 s through the metrics exchange, plus the Slave’s 2.036 s isolation probe. No manual RF retry was issued.
+
+At 01:06:11 both radio configuration and metrics were present in the Gateway database for both nodes. Extended live HTTP checks passed for malformed and oversized bodies, empty/non-ASCII/control-character inputs, concurrent invalid requests, and lockout after five failures. The 30-minute idle boundary passed in native tests with a simulated clock. The phone screenshots use sanitized fixtures.
