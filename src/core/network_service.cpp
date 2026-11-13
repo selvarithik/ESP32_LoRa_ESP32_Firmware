@@ -76,6 +76,13 @@ bool upstream(const Message& input) {
      return direct&&track(m,c.server_host,true);
  if(c.role==DeviceRole::NODE&&loraTransport.isInitialized()){
      String parent=masterId();
+#ifdef CONDUCTED_BENCH
+     // Keep the conducted acceptance stream focused on command replies and
+     // the explicitly queued INA219 sample. A large heartbeat can occupy
+     // several turns and block the sensor sample.
+     if(m.type==PacketType::HEARTBEAT||m.type==PacketType::DIAGNOSTIC||
+        m.type==PacketType::EVENT||m.type==PacketType::ALARM)return false;
+#endif
      if(parent.isEmpty()||m.type==PacketType::HELLO)return false; // Registration is requested by the Master poll.
      m.destination=parent;m.nextHop=parent;return track(m,"RADIO:"+parent);
  }
