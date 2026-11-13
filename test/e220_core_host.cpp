@@ -99,9 +99,9 @@ static void capturedRssiFraming() {
   }
   assert(frames==(scenario>=3?2U:1U));
   assert(rejects==(scenario>=4&&scenario<=6?1U:0U));
-  if(scenario==4)assert(signals.size()==1&&signals[0]==-32);
+  if(scenario==4||scenario==7)assert(signals.size()==1&&signals[0]==-32);
   else{
-   assert(signals.size()==frames&&signals[0]==(scenario==7?-256:-33));
+   assert(signals.size()==frames&&signals[0]==-33);
    if(frames==2)assert(signals[1]==-32);
   }
  }

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 #include "../protocol/packet_validation_core.h"
+#include "radio_rssi.h"
 namespace E220Core {
 constexpr size_t MaxMessage=3072,Header=30,Tag=16,MaxFrame=200;
 constexpr uint32_t AssemblyLifetime=120000;
@@ -29,7 +30,7 @@ public:
  template<class Signal>
  bool expire(uint32_t now,Signal signal) {
   if(now-lastByteAt<=1000)return false;
-  if(possibleStart&&length==1&&reportRssi)signal(4-256);
+  if(possibleStart&&length==1&&reportRssi)signal(RadioRssi::dbm(4));
   const bool rejected=skipRssi||overflow||length>size_t(possibleStart);
   length=0;
   skipRssi=reportRssi=possibleStart=overflow=false;
@@ -42,7 +43,7 @@ public:
    skipRssi=false;
    // RSSI 0x04 can also be the start of the next frame if RSSI was lost.
    if(byte==4){encoded[length++]=byte;possibleStart=true;return true;}
-   if(reportRssi)signal(int(byte)-256);
+   if(reportRssi&&RadioRssi::available(byte))signal(RadioRssi::dbm(byte));
    reportRssi=false;
    return true;
   }
@@ -52,7 +53,7 @@ public:
    if(possibleStart){
     if(startsFrame(encoded,length))rejected=true;
     else{
-     if(reportRssi)signal(4-256);
+     if(reportRssi)signal(RadioRssi::dbm(4));
      start=1;
     }
    }

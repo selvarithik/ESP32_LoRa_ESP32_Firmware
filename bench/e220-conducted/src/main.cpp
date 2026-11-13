@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <esp_mac.h>
 #include "../../../src/config/hardware_profile.h"
+#include "../../../src/communication/radio_rssi.h"
 
 namespace {
 constexpr char Version[] = "E220 conducted bench 1.0.0";
@@ -101,8 +102,8 @@ void configure(bool setKey) {
 
 void finishBurst() {
     if (!pendingByte) return;
-    if (rssiEnabled && burstSize >= 2) {
-        Serial.printf("RX %lu %02X RSSI %d dBm\n", (unsigned long)lastByteTime, lastByte, int(lastByte) - 256);
+    if (rssiEnabled && burstSize >= 2 && RadioRssi::available(lastByte)) {
+        Serial.printf("RX %lu %02X RSSI %d dBm\n", (unsigned long)lastByteTime, lastByte, RadioRssi::dbm(lastByte));
     } else {
         Serial.printf("RX %lu %02X RSSI_UNAVAILABLE\n", (unsigned long)lastByteTime, lastByte);
     }
