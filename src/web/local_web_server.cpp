@@ -187,10 +187,10 @@ bool LocalWebServer::authorize(bool mutation){
 bool LocalWebServer::body(size_t maximum){if(_server.header("Content-Type").indexOf("application/json")!=0){sendJson(415,"{\"error\":\"application/json required\"}");return false;}if(!_server.hasArg("plain")||_server.arg("plain").length()>maximum){sendJson(413,"{\"error\":\"Missing or oversized body\"}");return false;}return true;}
 bool LocalWebServer::authorizeNodeChat(){
  const String value=_server.header("Authorization");
- const bool valid=chatToken[0]&&millis()-chatTouched<1800000&&value.length()==71&&
+ const bool matches=chatToken[0]&&value.length()==71&&
   value.startsWith("Bearer ")&&BrowserSessions::same(chatToken,value.c_str()+7);
- if(!valid){sendJson(401,"{\"error\":\"Sign in to node chat.\"}");return false;}
- chatTouched=millis();return true;
+ if(!chatAccess.authorize(millis(),matches)){sendJson(401,"{\"error\":\"Sign in to node chat.\"}");return false;}
+ return true;
 }
 void LocalWebServer::registerNodeChat(){
  _server.on("/node-chat",HTTP_GET,[this](){
@@ -199,8 +199,7 @@ void LocalWebServer::registerNodeChat(){
  });
  _server.on("/api/node-chat/login",HTTP_POST,[this](){
   const uint32_t now=millis();
-  if(chatFailures>=5&&now-chatBlockedAt<60000){sendJson(429,"{\"error\":\"Try again in one minute.\"}");return;}
-  if(chatFailures>=5)chatFailures=0;
+  if(chatAccess.locked(now)){sendJson(429,"{\"error\":\"Try again in one minute.\"}");return;}
   if(!body(256))return;
   JsonDocument doc;
   const String raw=_server.arg("plain");
@@ -208,12 +207,12 @@ void LocalWebServer::registerNodeChat(){
    sendJson(400,"{\"error\":\"PIN required.\"}");return;
   }
   if(!NodeChat::verifyPin(doc["pin"])){
-   if(++chatFailures==5)chatBlockedAt=now;
+   chatAccess.fail(millis());
    sendJson(401,"{\"error\":\"Invalid PIN.\"}");return;
   }
   uint8_t random[32];esp_fill_random(random,sizeof(random));
   for(unsigned i=0;i<sizeof(random);++i)snprintf(chatToken+2*i,3,"%02x",random[i]);
-  chatFailures=0;chatTouched=now;
+  chatAccess.login(millis());
   _server.sendHeader("Cache-Control","no-store");
   sendJson(200,String("{\"token\":\"")+chatToken+"\"}");
  });

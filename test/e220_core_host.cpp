@@ -260,6 +260,15 @@ static void capturedV3Rssi(){
 }
 int main(){
  capturedV3Rssi();
+ NodeChat::AccessWindow access;
+ assert(!access.authorize(1,true));
+ for(unsigned i=0;i<5;++i){assert(!access.locked(100+i));access.fail(100+i);}
+ assert(access.locked(60103)&&!access.locked(60104));
+ access.login(70000);
+ assert(!access.authorize(1800000,false));
+ assert(access.authorize(1869999,true));
+ assert(!access.authorize(3669999,true));
+
  static_assert(NodeChat::deliveryDeadline(60000)>5*60000,"Chat must survive boot registration and command turns");
  assert(NodeChat::validText("<>&\"",4));
  assert(!NodeChat::validText("",0)&&!NodeChat::validText("a\nb",3));

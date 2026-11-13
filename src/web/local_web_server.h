@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <WebServer.h>
 #include "session_core.h"
+#include "../core/node_chat.h"
 
 class LocalHttpServer:public WebServer {
 public:
@@ -21,8 +22,7 @@ private:
     void registerNodeChat();
     bool authorizeNodeChat();
     char chatToken[65]{};
-    uint32_t chatTouched=0,chatBlockedAt=0;
-    unsigned chatFailures=0;
+    NodeChat::AccessWindow chatAccess;
 
     void handleRoot();
     void handleStatus();
