@@ -1,5 +1,6 @@
 #include "local_web_server.h"
 #include "node_chat_page.h"
+#include "node_chat_favicon.h"
 #include "../core/node_chat.h"
 #include <esp_system.h>
 #include "../core/config_manager.h"
@@ -193,6 +194,12 @@ bool LocalWebServer::authorizeNodeChat(){
  return true;
 }
 void LocalWebServer::registerNodeChat(){
+ _server.on("/favicon.ico",HTTP_GET,[this](){
+  _server.send_P(200,"image/x-icon",reinterpret_cast<const char*>(GatewayFaviconIco),sizeof(GatewayFaviconIco));
+ });
+ _server.on("/favicon-180.png",HTTP_GET,[this](){
+  _server.send_P(200,"image/png",reinterpret_cast<const char*>(GatewayFaviconPng),sizeof(GatewayFaviconPng));
+ });
  _server.on("/node-chat",HTTP_GET,[this](){
   _server.sendHeader("Cache-Control","no-store");
   _server.send_P(200,"text/html",nodeChatPage);
