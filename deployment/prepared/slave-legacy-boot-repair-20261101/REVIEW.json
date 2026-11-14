@@ -1,0 +1,46 @@
+{
+  "prepared_only": true,
+  "approval_required_before_deployment": true,
+  "reason": "ESP-IDF 3.0.3 bootloader/table lack required MD5 metadata; current application aborts before setup.",
+  "preserved_partition_entries": 6,
+  "partition_offsets_sizes_and_labels_unchanged": true,
+  "planned_writes": [
+    {
+      "offset": "0x1000",
+      "file": "bootloader.bin",
+      "bytes": 17536,
+      "sha256": "3d234a7471f67b013686dabd4dee7c1fa915c9928463616a94bc9297acf1abf8",
+      "erased_sector_range": [
+        "0x1000",
+        "0x6000"
+      ]
+    },
+    {
+      "offset": "0x8000",
+      "file": "partition-table-same-layout-with-md5.bin",
+      "bytes": 4096,
+      "sha256": "1a0391cff18d28168ec78f90f192884ff535c39a4a1ae89bb57627f0974b7f39",
+      "erased_sector_range": [
+        "0x8000",
+        "0x9000"
+      ]
+    },
+    {
+      "offset": "0x100000",
+      "file": "firmware.bin",
+      "bytes": 1369936,
+      "sha256": "78859f95252149792872cc2c9ca7c457c70a62b2ae1eb7fb26b32b08b83202ba",
+      "erased_sector_range": [
+        "0x100000",
+        "0x24f000"
+      ]
+    }
+  ],
+  "nvs_offset": "0x12000",
+  "nvs_bytes": 57344,
+  "second_slot_preserved": true,
+  "customization_partition_preserved": true,
+  "flash_erase_all": false,
+  "deployment_performed": false,
+  "original_slave_application_restored": true
+}
